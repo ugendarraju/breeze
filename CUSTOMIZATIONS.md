@@ -11,7 +11,7 @@ Every upstream file we modify gets a row below, so merge conflicts have a checkl
 | Path | Purpose |
 |---|---|
 | `CUSTOMIZATIONS.md` | This log |
-| `scripts/dev/podman-infra.ps1` | Local Postgres + Redis on Podman (Windows, no Docker) |
+| `scripts/fork/setup-ubuntu.sh` | One-shot Breeze setup on fresh Ubuntu 24.04 (local VirtualBox VM, later the VPS) |
 | `scripts/dev/sync-upstream.ps1` | Merge upstream changes into this fork |
 
 ## Modified upstream files (check these after every sync)
