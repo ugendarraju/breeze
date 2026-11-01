@@ -491,6 +491,8 @@ export const navSections: NavSection[] = [
     labelKey: 'nav.sectionAdministration',
     icon: ShieldEllipsis,
     items: [
+      // Fork addition (CUSTOMIZATIONS.md): platform-operator partner directory.
+      { name: 'Partners', labelKey: 'nav.partnersAdmin', href: '/admin/partners', icon: Building2, platformAdminOnly: true },
       { name: 'Deletion Requests', labelKey: 'nav.deletionRequests', href: '/admin/account-deletion-requests', icon: UserX, badgeKind: 'deletion-requests', platformAdminOnly: true },
       { name: 'Quarantined Devices', labelKey: 'nav.quarantinedDevices', href: '/admin/quarantined', icon: Ban, platformAdminOnly: true },
       { name: 'Third-Party Catalog', labelKey: 'nav.thirdPartyCatalog', href: '/admin/third-party-catalog', icon: Boxes, platformAdminOnly: true },

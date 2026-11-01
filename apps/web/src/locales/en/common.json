@@ -76,6 +76,7 @@
     "sso": "SSO",
     "accessReviews": "Access Reviews",
     "enrollmentKeys": "Enrollment Keys",
+    "partnersAdmin": "Partners",
     "deletionRequests": "Deletion Requests",
     "quarantinedDevices": "Quarantined Devices",
     "thirdPartyCatalog": "Third-Party Catalog",
