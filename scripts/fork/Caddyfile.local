@@ -1,0 +1,50 @@
+# Local HTTPS for the Breeze dev stack (VirtualBox VM / LAN testing).
+# Caddy's internal CA issues the certs (`tls internal`); install its root
+# (/var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt) on a
+# device to make the browser warning go away.
+#
+# Routing mirrors docker/Caddyfile.prod in miniature: API paths -> api:3001,
+# /portal -> portal:4322, everything else -> web:4321.
+#
+# Site addresses use nip.io names (public DNS: 192-168-1-5.nip.io -> 192.168.1.5)
+# because browsers send no SNI when connecting to a bare IP, so Caddy could not
+# pick a certificate. Set BREEZE_LAN_HOST to the dashed form of this PC's Wi-Fi IP.
+#   https://{$BREEZE_LAN_HOST}.nip.io  - phones/laptops on the same Wi-Fi
+#   https://localhost                 - the host PC's own browser
+#   https://10-0-2-2.nip.io           - other VirtualBox NAT VMs (the win-11 test client)
+
+{
+	local_certs
+	default_sni {$BREEZE_LAN_HOST}.nip.io
+}
+
+https://{$BREEZE_LAN_HOST}.nip.io, https://localhost, https://10-0-2-2.nip.io {
+	tls internal
+
+	@streaming path /api/v1/mcp/sse /api/v1/helper/chat/sessions/*/messages /api/v1/ai/sessions/*/stream
+	handle @streaming {
+		reverse_proxy localhost:3001 {
+			flush_interval -1
+		}
+	}
+
+	@api path /api/* /s/* /health /health/* /ready /metrics/* /i/* /activate/* /oauth/* /.well-known/*
+	handle @api {
+		reverse_proxy localhost:3001
+	}
+
+	# The Astro dev servers only answer to allow-listed hosts (403 otherwise), so
+	# present web/portal requests as localhost instead of editing upstream config.
+	@portal path /portal /portal/*
+	handle @portal {
+		reverse_proxy localhost:4322 {
+			header_up Host localhost:4322
+		}
+	}
+
+	handle {
+		reverse_proxy localhost:4321 {
+			header_up Host localhost:4321
+		}
+	}
+}

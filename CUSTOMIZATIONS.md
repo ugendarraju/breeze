@@ -12,6 +12,7 @@ Every upstream file we modify gets a row below, so merge conflicts have a checkl
 |---|---|
 | `CUSTOMIZATIONS.md` | This log |
 | `scripts/fork/setup-ubuntu.sh` | One-shot Breeze setup on fresh Ubuntu 24.04 (local VirtualBox VM, later the VPS) |
+| `scripts/fork/Caddyfile.local` | Local HTTPS (Caddy internal CA, nip.io hostnames) in front of the dev stack |
 | `scripts/dev/sync-upstream.ps1` | Merge upstream changes into this fork |
 
 ## Modified upstream files (check these after every sync)
