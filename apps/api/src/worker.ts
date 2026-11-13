@@ -75,6 +75,8 @@
  *      unconditional check index.ts performs, so a worker-role process can
  *      never serve tenant-scoped queries through a SUPERUSER/BYPASSRLS pool.
  *   5. Redis mandatory — exit non-zero if unreachable (no limp mode).
+ *   5b. Cluster cache bus subscriber (#8639) — so the hot-path caches the job
+ *      graph loads are invalidated by writes on other instances.
  *   6. Extension runtime in `mode: 'worker'` (parity-check-never-apply,
  *      publish tenancy, stage, validate, seed state, activate registry; no
  *      web-asset registration — there is no HTTP server to serve it from).
@@ -177,6 +179,7 @@ let refreshRuntimeMetrics: (() => void) | null = null;
 // Assigned once the dynamically-imported db/redis modules are available
 // (start of main(), before any readiness probe can actually be reached).
 let probeDb: () => Promise<boolean> = async () => false;
+let probeDbReadOnly: () => Promise<boolean> = async () => false;
 let probeRedis: () => Promise<boolean> = async () => false;
 
 /**
@@ -189,6 +192,7 @@ const readinessTiming = resolveReadinessTiming(process.env, (name, requested, ef
 
 const readiness = createReadinessEvaluator({
   checkDb: () => probeDb(),
+  checkDbReadOnly: () => probeDbReadOnly(),
   checkRedis: () => probeRedis(),
   workerRegistry: workerReadinessRegistry,
   workersInitialized: () => workerInitPhase === 'started',
@@ -225,7 +229,7 @@ function currentPhaseLabel(): string {
 
 /**
  * `/health/ready`. Structured 503 bodies with a single `reason`:
- * `'migrations-pending' | 'db' | 'redis' | 'workers-pending' | 'shutting-down'`.
+ * `'migrations-pending' | 'db' | 'db-read-only' | 'redis' | 'workers-pending' | 'shutting-down'`.
  * Before migration parity is reached, this answers directly (the live
  * evaluator's db/redis probes aren't meaningful yet); afterward it delegates
  * to `readiness.get()` and translates the snapshot into one reason.
@@ -245,6 +249,7 @@ async function handleReadyRequest(res: ServerResponse): Promise<void> {
       role: 'worker' as const,
       ready: snapshot.ready,
       db: snapshot.db,
+      dbReadOnly: snapshot.dbReadOnly,
       redis: snapshot.redis,
       workers: snapshot.workers,
       checkedAt: snapshot.checkedAt,
@@ -257,8 +262,7 @@ async function handleReadyRequest(res: ServerResponse): Promise<void> {
       writeJson(res, 200, body);
       return;
     }
-    const reason = !snapshot.db ? 'db' : !snapshot.redis ? 'redis' : 'workers-pending';
-    writeJson(res, 503, { reason, ...body });
+    writeJson(res, 503, { reason: snapshot.reason ?? 'workers-pending', ...body });
   } catch (error) {
     console.error('[worker][ready] readiness evaluation failed:', error);
     captureException(error instanceof Error ? error : new Error(String(error)));
@@ -434,6 +438,7 @@ export async function bootWorker(): Promise<void> {
   // Everything below is dynamically imported — see the header comment for
   // why (several of these modules' own static closures reach `routes/`).
   const dbModule = await import('./db');
+  const { isReadOnlyProbeResult, TRANSACTION_READ_ONLY_PROBE_SQL } = await import('./db/readOnlyDatabase');
   const { getRedis, closeRedis } = await import('./services/redis');
   const { waitForMigrationParity } = await import('./db/migrationParity');
   const { loadBuiltinExtensions } = await import('./extensions/builtinExtensions');
@@ -449,6 +454,7 @@ export async function bootWorker(): Promise<void> {
   const { shutdownEventDispatcher } = await import('./services/eventDispatcher');
   const { shutdownEventDispatchQueue } = await import('./services/eventDispatchQueue');
   const { getEventBus } = await import('./services/eventBus');
+  const { getClusterCacheBus } = await import('./services/clusterCacheBus');
   const { drainAuditRetryQueue } = await import('./services/auditService');
   const {
     getDbPoolHealthMinTimeouts,
@@ -533,6 +539,11 @@ export async function bootWorker(): Promise<void> {
       return false;
     }
   };
+  // #11731: reachable but rejecting writes. Throws on failure; the evaluator
+  // reports it and treats the answer as unknown.
+  probeDbReadOnly = async () => runWithSystemDbAccess(async () =>
+    isReadOnlyProbeResult(await db.execute(sql.raw(TRANSACTION_READ_ONLY_PROBE_SQL))),
+  );
   probeRedis = async () => {
     try {
       const redis = getRedis();
@@ -591,6 +602,17 @@ export async function bootWorker(): Promise<void> {
     process.exit(1);
     return;
   }
+
+  // Step 5b (W05 follow-up, #8639): subscribe to cluster cache invalidations.
+  // The worker's job graph loads cluster-invalidated hot-path caches (UniFi
+  // telemetry reads topology flags + the collector-absence cache, queued
+  // commands read the manifest keyset, the WISP wake scheduler reads
+  // entitlements — pinned by workerClusterCacheAudit.contract.test.ts); without
+  // a subscriber those entries only expire by TTL. Before step 8 so no job
+  // reads a cache before it can be invalidated. Bounded at 1 s, never throws.
+  const clusterCacheOutcome = await getClusterCacheBus().start();
+  if (clusterCacheOutcome === 'subscribed') console.log('[worker][clusterCache] subscriber subscribed');
+  else console.warn(`[worker][clusterCache] subscriber ${clusterCacheOutcome}: hot-path caches on this worker are TTL-only until it subscribes`);
 
   // Step 6: extension runtime, worker-safe mode (no web-asset registration —
   // there is no HTTP server here to serve it from).
@@ -745,6 +767,8 @@ export async function bootWorker(): Promise<void> {
         name: 'queues',
         tasks: [shutdownEventDispatcher, shutdownEventDispatchWorker, shutdownEventDispatchQueue],
       },
+      // 3b. The cluster cache subscriber owns its own duplicate connection.
+      { name: 'cluster-cache-bus', tasks: [() => getClusterCacheBus().stop()] },
       // 4. Event bus releases its borrowed connection reference.
       { name: 'eventbus', tasks: [async () => getEventBus().close()] },
       // 5. The ONLY owner of the Redis quits.

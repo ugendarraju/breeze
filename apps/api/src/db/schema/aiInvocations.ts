@@ -13,6 +13,18 @@ export type AiInvocationLedgerMode = (typeof AI_INVOCATION_LEDGER_MODES)[number]
 const cents = (name: string) => numeric(name, { precision: 20, scale: 6, mode: 'number' });
 const tokens = (name: string) => bigint(name, { mode: 'number' }).notNull().default(0);
 
+/**
+ * #10413: why a ledger row's model ran (2027-01-15-120000). `primary` = the
+ * bound model (or a model this session switched away from); `fallback` = a
+ * model that served the turn instead of it (`fallback_used` is true exactly
+ * for these); `background` = the Agent SDK CLI's own helper call (a
+ * `modelUsage` key that neither the bound model nor the turn's served model
+ * accounts for). Billed like any row; never counted as a fallback. NULL =
+ * settled before the column existed.
+ */
+export const AI_INVOCATION_MODEL_ROLES = ['primary', 'background', 'fallback'] as const;
+export type AiInvocationModelRole = (typeof AI_INVOCATION_MODEL_ROLES)[number];
+
 // AI chargeback (#7608): the frozen client-price snapshot (2026-11-26-100100).
 export const AI_CHARGE_COVERAGES = ['billable', 'included', 'non_billable', 'not_eligible'] as const;
 export const AI_CHARGE_BASES = ['price_list', 'markup', 'unpriced'] as const;
@@ -39,6 +51,8 @@ export const aiInvocations = pgTable('ai_invocations', {
   stopReason: text('stop_reason'),
   refusalCategory: text('refusal_category'),
   fallbackUsed: boolean('fallback_used').notNull().default(false),
+  /** #10413: AiInvocationModelRole; NULL before the column. CHECK ai_invocations_model_role_chk ties 'fallback' to fallback_used. */
+  modelRole: text('model_role').$type<AiInvocationModelRole>(),
   /** W09 (#7607): the offering routed to before failover; null on hop 0. Provenance, no FK. */
   failoverFromOfferingId: uuid('failover_from_offering_id'),
   /** W09: candidates passed over before the serving one (0 = no failover). */
@@ -69,6 +83,10 @@ export const aiInvocations = pgTable('ai_invocations', {
   promptVariant: text('prompt_variant'),
   /** W11: when the turn was first settled; survives a deferred replay (created_at does not). Ordering only, never a billing period. */
   occurredAt: timestamp('occurred_at', { withTimezone: true }),
+  /** #11395: the resolved tool profile the call ran under (full | standard | minimal | custom); NULL before W03 or outside a tool exposure. */
+  toolProfile: text('tool_profile'),
+  /** #11395: the tool exposure's fingerprint ('full' for the identity exposure, else 16 hex chars). */
+  toolExposureFingerprint: text('tool_exposure_fingerprint'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [
   index('ai_invocations_org_created_idx').on(t.orgId, t.createdAt.desc()),

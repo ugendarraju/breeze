@@ -1,11 +1,15 @@
 import { isIP } from 'net';
 import { parseCimdAllowedHosts } from '../oauth/cimdHosts';
-import { MAX_BOOTSTRAP_TOKEN_TTL_MINUTES } from '@breeze/shared';
+import { MAX_BOOTSTRAP_TOKEN_TTL_MINUTES, OEM_LANES } from '@breeze/shared';
 import { parseUnattendedPrincipals } from '../services/mcpUnattendedPrincipals';
+import { TICKET_IMPORT_LIMIT_ENV_VARS } from '../services/ticketImport/importLimits';
 import { z } from 'zod';
 import { validateM365CustomerGraphReadRuntimeConfigAtBoot } from '../services/m365ControlPlane/runtimeConfig';
 import { validateM365CustomerGraphActionsRuntimeConfigAtBoot } from '../services/m365ControlPlane/writeActionRuntimeConfig';
 import { validateM365CommunicationsRuntimeConfigAtBoot } from '../services/m365ControlPlane/commsRuntimeConfig';
+import { getPortalEntraConfig } from './portalEntra';
+import { getPortalGoogleConfig } from './portalGoogle';
+import { warnOnTrustedProxyCidrMismatch } from './proxyTrustBootCheck';
 import {
   OFFICIAL_RELEASE_REPOSITORY,
   RELEASE_SOURCE_REPOSITORY_SHAPE,
@@ -650,6 +654,46 @@ const envObjectSchema = z
       .string()
       .optional()
       .describe('Attachment bytes one migration window may download and store per hour. A plain positive integer; default 2147483648 (2 GiB), never below 10485760 (one file).'),
+    // Ticket import worker knobs (#8313 W4, services/ticketImport/importLimits.ts):
+    // read per use through positiveIntEnv, which falls back to the default on
+    // anything but a plain positive integer and clamps into range. Declared so
+    // collectWarnings() reports an ignored value once at boot; not boot-refused.
+    TICKET_IMPORT_WORKER_CONCURRENCY: z
+      .string()
+      .optional()
+      .describe('Import slices one API process runs at once. Default 3, at most 32.'),
+    TICKET_IMPORT_GLOBAL_CONCURRENCY: z
+      .string()
+      .optional()
+      .describe('Import slices holding the lease across every process. Default 2; always kept below TICKET_IMPORT_WORKER_CONCURRENCY.'),
+    TICKET_IMPORT_LEASE_MS: z
+      .string()
+      .optional()
+      .describe('Lifetime of an import slice lease in ms, renewed every third of it. Default 60000, between 5000 and 600000.'),
+    TICKET_IMPORT_SLICE_MS: z
+      .string()
+      .optional()
+      .describe('Work one import slice does before it hands over, in ms. Default 300000, between 5000 and 3600000.'),
+    TICKET_IMPORT_SOURCE_CONCURRENCY: z
+      .string()
+      .optional()
+      .describe('Requests in flight to one import source at once. Default 2, at most 16.'),
+    TICKET_IMPORT_SOURCE_TIMEOUT_MS: z
+      .string()
+      .optional()
+      .describe('Timeout of one request to an import source, in ms. Default 30000, between 1000 and 300000.'),
+    TICKET_IMPORT_MAX_CLOCK_SKEW_MS: z
+      .string()
+      .optional()
+      .describe('How far in the future a source time may be and still be clamped to now, in ms. Default 300000.'),
+    TICKET_IMPORT_MAX_ISSUES_PER_RUN: z
+      .string()
+      .optional()
+      .describe('Report rows one import run keeps; counters stay exact beyond it. Default 50000.'),
+    TICKET_IMPORT_MAX_TICKET_BYTES: z
+      .string()
+      .optional()
+      .describe('Converted content of one imported ticket in bytes. Default 268435456 (256 MiB), between 1 MiB and 2 GiB.'),
     MFA_RECOVERY_CODE_PEPPER: z.string().optional(),
     BREEZE_BOOTSTRAP_ADMIN_EMAIL: z.string().optional(),
     BREEZE_BOOTSTRAP_ADMIN_PASSWORD: z.string().optional(),
@@ -693,6 +737,9 @@ const envObjectSchema = z
     BREEZE_RELEASE_ARTIFACT_MANIFEST_PUBLIC_KEYS: z.string().optional(),
     IS_HOSTED: z.string().optional(),
     AGENT_BACKUP_SERVER_URL: z.string().optional(),
+    // API-side directory for local backup destinations (self-hosted only;
+    // refused on a hosted deployment, see superRefine). '' = unset.
+    BACKUP_LOCAL_ROOT: z.string().optional(),
 
     // Platform date from which partners without an explicit approval-security
     // enforcement choice require an approver device for high/critical
@@ -840,6 +887,12 @@ const envObjectSchema = z
     // read at runtime by wispEnabled() in env.ts. Boolean format + the
     // production IS_HOSTED coupling are checked in the superRefines below.
     BREEZE_WISP_ENABLED: z.string().optional(),
+    // Vendor updates (#11065): all dark by default. Read at runtime by
+    // services/oemUpdates/flags.ts; checked in the superRefine below.
+    BREEZE_OEM_UPDATES_ENABLED: z.string().optional(),
+    BREEZE_OEM_UPDATES_PARTNER_ALLOWLIST: z.string().optional(),
+    BREEZE_OEM_UPDATES_DISABLED_LANES: z.string().optional(),
+    BREEZE_OEM_UPDATES_LAB_DEVICE_IDS: z.string().optional(),
     // 'vercel' | 'fake'. Resolved at runtime by resolveSandboxBackendName()
     // (services/workspace/sandboxBackend.ts), which refuses an unset value in
     // production; the superRefine below additionally refuses 'fake' there.
@@ -1020,6 +1073,33 @@ const envObjectSchema = z
     XERO_WEBHOOK_KEY: z.string().optional(),
     XERO_DAILY_CALL_LIMIT: z.string().optional(),
 
+    // Customer portal "Sign in with Microsoft" (portal registration W4). The
+    // portal's own Entra app; off unless BOTH the id and the secret are set.
+    // Parsed at call time by config/portalEntra.ts; validated at boot below so
+    // a malformed callback base fails here, not on a portal request.
+    PORTAL_ENTRA_CLIENT_ID: z.string().optional(),
+    PORTAL_ENTRA_CLIENT_SECRET: z.string().optional(),
+    PORTAL_ENTRA_CALLBACK_BASE_URL: z.string().optional(),
+
+    // Customer portal "Sign in with Google" (portal registration W7). The
+    // portal's own Google OAuth client; off unless BOTH the id and the secret
+    // are set. Parsed at call time by config/portalGoogle.ts; validated at boot
+    // below, like the Entra app.
+    PORTAL_GOOGLE_CLIENT_ID: z.string().optional(),
+    PORTAL_GOOGLE_CLIENT_SECRET: z.string().optional(),
+    PORTAL_GOOGLE_CALLBACK_BASE_URL: z.string().optional(),
+
+    // Customer-portal self-registration kill switch (portal registration W6,
+    // plan D2). Unset/empty, true or 1 → on; false or 0 → off. Read at call
+    // time by config/portalSelfRegistration.ts (same accepted values); any
+    // other value fails boot here.
+    PORTAL_SELF_REGISTRATION_ENABLED: z
+      .string()
+      .optional()
+      .refine((v) => v === undefined || /^\s*(true|false|1|0)?\s*$/i.test(v), {
+        message: 'PORTAL_SELF_REGISTRATION_ENABLED must be one of true, 1, false or 0',
+      }),
+
     // S3 / object storage — required when S3_BUCKET is set.
     S3_BUCKET: z.string().optional(),
     S3_ACCESS_KEY: z.string().optional(),
@@ -1153,6 +1233,8 @@ const envObjectSchema = z
     // boot-refuses instead of silently staying on.
     HEARTBEAT_RETAIN_STATE_ENABLED: z.enum(['true', 'false']).default('true'),
     AGENT_ECH_ENABLED: z.enum(['true', 'false']).default('true'),
+    NETWORK_ISOLATION_ENABLED: z.enum(['true', 'false']).default('false'),
+    NETWORK_ISOLATION_ENABLED_PARTNER_IDS: z.string().refine(value => !value.trim() || value.split(',').every(id => z.string().uuid().safeParse(id.trim()).success), 'Expected comma-separated partner UUIDs').optional(),
 
     // Phase 2 of per-partner LLM BYOK (#3922), Task 3.1 — gates catalog-mode
     // routing (partner_ai_connections.catalog_entry_id). Off by default so a
@@ -1270,6 +1352,21 @@ const envSchema = envObjectSchema
             'AGENT_BACKUP_SERVER_URL must be a valid https:// URL (http:// allowed only for localhost)',
         });
       }
+    }
+
+    // API-side local backup storage reads operator-provisioned directories on
+    // the API and worker servers. A hosted deployment does not offer it, so a
+    // value there is a configuration mistake and refuses to boot.
+    const backupLocalRoot = (data.BACKUP_LOCAL_ROOT ?? '').trim();
+    const hostedForLocalBackup = ['true', '1', 'yes', 'on'].includes((data.IS_HOSTED ?? '').trim().toLowerCase());
+    if (backupLocalRoot && hostedForLocalBackup) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['BACKUP_LOCAL_ROOT'],
+        message:
+          'BACKUP_LOCAL_ROOT is not supported on a hosted deployment (IS_HOSTED=true). '
+          + 'API-side local backup storage is a self-hosted feature; unset BACKUP_LOCAL_ROOT.',
+      });
     }
 
     // --- JWT signing keyring (zero-downtime rotation) ---
@@ -2461,6 +2558,46 @@ const envSchema = envObjectSchema
         message: 'BREEZE_AI_WORKSPACE_ENABLED must be a boolean (true/false, 1/0, yes/no, on/off) when set. Defaults to false (the workspace lane and artifact capture are dark).',
       });
     }
+    // Vendor updates (#11065). The lab override opens closed firmware gates, so it
+    // stays out of production. An unknown lane in the kill switch would stop nothing
+    // and look like it had, so a typo refuses the boot.
+    const oemFlag = (data.BREEZE_OEM_UPDATES_ENABLED ?? '').trim().toLowerCase();
+    if (oemFlag && !boolValues.has(oemFlag)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['BREEZE_OEM_UPDATES_ENABLED'],
+        message: 'BREEZE_OEM_UPDATES_ENABLED must be a boolean (true/false, 1/0, yes/no, on/off) when set. Defaults to false.',
+      });
+    }
+    if (isProduction && (data.BREEZE_OEM_UPDATES_LAB_DEVICE_IDS ?? '').trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['BREEZE_OEM_UPDATES_LAB_DEVICE_IDS'],
+        message: 'BREEZE_OEM_UPDATES_LAB_DEVICE_IDS must not be set in production: it opens closed vendor update gates and is for lab devices only.',
+      });
+    }
+    // An empty allowlist means every partner, so a value that parses to nothing
+    // would open the feature to everyone while looking like a restriction.
+    const oemAllowlistRaw = (data.BREEZE_OEM_UPDATES_PARTNER_ALLOWLIST ?? '').trim();
+    if (oemAllowlistRaw && !oemAllowlistRaw.split(',').some((id) => id.trim())) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['BREEZE_OEM_UPDATES_PARTNER_ALLOWLIST'],
+        message: 'BREEZE_OEM_UPDATES_PARTNER_ALLOWLIST names no partner. Leave it unset to allow every partner.',
+      });
+    }
+    const unknownOemLanes = (data.BREEZE_OEM_UPDATES_DISABLED_LANES ?? '')
+      .split(',')
+      .map((lane) => lane.trim().toLowerCase())
+      .filter((lane) => lane && !(OEM_LANES as readonly string[]).includes(lane));
+    if (unknownOemLanes.length > 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['BREEZE_OEM_UPDATES_DISABLED_LANES'],
+        message: `BREEZE_OEM_UPDATES_DISABLED_LANES names unknown lanes: ${unknownOemLanes.join(', ')}. Known lanes: ${OEM_LANES.join(', ')}.`,
+      });
+    }
+
     const wispRaw = (data.BREEZE_WISP_ENABLED ?? '').trim().toLowerCase();
     if (wispRaw && !boolValues.has(wispRaw)) {
       ctx.addIssue({
@@ -3044,6 +3181,26 @@ function collectWarnings(env: Record<string, string | undefined>): ConfigWarning
     });
   }
 
+  // The ticket import worker's knobs (services/ticketImport/importLimits.ts)
+  // are plain positive integers; anything else falls back to its default.
+  // The global lease cap is kept below the worker concurrency, so a slot is
+  // always free to defer a refused slice: say so when the values given say
+  // otherwise.
+  for (const key of TICKET_IMPORT_LIMIT_ENV_VARS) {
+    const raw = (env[key] ?? '').trim();
+    if (raw !== '' && !(/^\d+$/.test(raw) && Number.parseInt(raw, 10) > 0)) {
+      warnings.push({ key, message: `"${raw}" is not a plain positive integer; the default applies.` });
+    }
+  }
+  const importWorkers = Number.parseInt((env.TICKET_IMPORT_WORKER_CONCURRENCY ?? '').trim() || '3', 10);
+  const importGlobal = Number.parseInt((env.TICKET_IMPORT_GLOBAL_CONCURRENCY ?? '').trim() || '2', 10);
+  if (Number.isFinite(importWorkers) && Number.isFinite(importGlobal) && importWorkers > 1 && importGlobal >= importWorkers) {
+    warnings.push({
+      key: 'TICKET_IMPORT_GLOBAL_CONCURRENCY',
+      message: `${importGlobal} is not below TICKET_IMPORT_WORKER_CONCURRENCY (${importWorkers}); ${importWorkers - 1} applies.`,
+    });
+  }
+
   // Warn about optional secrets that look insecure
   const optionalSecrets = [
     'AGENT_ENROLLMENT_SECRET',
@@ -3138,11 +3295,23 @@ export function validateConfig(): AppConfig {
   // executor's, wrapped under a KEK the API's identity cannot get (§3.2).
   validateM365CommunicationsRuntimeConfigAtBoot(env);
 
+  // Portal Entra app (W4): read at call time on the portal sign-in paths, so
+  // a malformed PORTAL_ENTRA_CALLBACK_BASE_URL / client id would otherwise
+  // first throw on a customer's request. Throws only when the app is
+  // configured (both id and secret set).
+  getPortalEntraConfig(env);
+  // Portal Google client (W7): the same boot check for its client id and base.
+  getPortalGoogleConfig(env);
+
   // (The APP_ENCRYPTION_KEY_ID ↔ M365_GRAPH_ACTIONS_TOOLS_ENABLED pairing rule
   // used to live here as a post-parse throw reading `env` directly. It now runs
   // in the schema superRefine on declared keys — see #3374.)
 
   _config = result.data;
+
+  // #2987: advisory only — warn when TRUSTED_PROXY_CIDRS overlaps none of the
+  // subnets this process is attached to (stale pinned proxy address). Never throws.
+  warnOnTrustedProxyCidrMismatch(env);
 
   // #1412: surface an off-default AI route at boot so there is an audit trail
   // (and a self-hoster sees confirmation their backend is active). Reaching

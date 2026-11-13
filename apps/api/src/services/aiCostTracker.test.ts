@@ -9,6 +9,7 @@ import {
   debitBillingCredits,
   getUsageSummary,
   getAggregateUsageSummary,
+  getSessionHistory,
   sumInputTokens,
   updateBudget,
 } from './aiCostTracker';
@@ -41,6 +42,8 @@ vi.mock('../db', () => ({
   runOutsideDbContext: vi.fn((fn: () => unknown) => fn()),
   withDbAccessContext: vi.fn(async (_ctx: unknown, fn: () => Promise<unknown>) => fn()),
   withSystemDbAccessContext: vi.fn(async (fn: () => Promise<unknown>) => fn()),
+  withDbTransaction: vi.fn(async (fn: () => Promise<unknown>) => fn()),
+  withDbTransactionIfHeld: vi.fn(async (fn: () => Promise<unknown>) => fn()),
   db: {
     update: vi.fn(),
     insert: vi.fn(),
@@ -64,6 +67,7 @@ vi.mock('../db/schema', () => ({
     orgId: 'orgId',
     catalogEntryId: 'catalogEntryId',
     lastActivityAt: 'lastActivityAt',
+    transcriptPurgedAt: 'transcriptPurgedAt',
   },
   aiCostUsage: {
     orgId: 'orgId',
@@ -316,6 +320,36 @@ describe('checkBillingCredits billing-source split', () => {
     );
   });
 });
+describe('checkBillingCreditsDetailed: community partner-key gate pinned', () => {
+  it('does not deny a community partner on a partner key when credits say not allowed', async () => {
+    const fetchMock = enableBillingService();
+    fetchMock.mockResolvedValueOnce(billingCreditsResponse({
+      allowed: false,
+      remainingCredits: 0,
+      plan: 'community',
+    }));
+    setupDbMocks(null);
+
+    await expect(checkBillingCreditsDetailed('org-1', 'partner_key')).resolves.toBeNull();
+  });
+
+  it('still returns the plan_gate denial for a free partner on a partner key', async () => {
+    const fetchMock = enableBillingService();
+    fetchMock.mockResolvedValueOnce(billingCreditsResponse({
+      allowed: false,
+      remainingCredits: 0,
+      plan: 'free',
+    }));
+    setupDbMocks(null);
+
+    await expect(checkBillingCreditsDetailed('org-1', 'partner_key')).resolves.toEqual({
+      message: 'AI assistant requires the Community plan.',
+      reason: 'plan_gate',
+      permanent: true,
+    });
+  });
+});
+
 describe('sumInputTokens', () => {
   it('sums the three disjoint slices the SDK splits input across', () => {
     expect(sumInputTokens({
@@ -1471,5 +1505,22 @@ describe('getAggregateUsageSummary (#9667)', () => {
     expect(mockDb.select).not.toHaveBeenCalled();
     expect(res.daily.totalCostCents).toBe(0);
     expect(res.monthly.messageCount).toBe(0);
+  });
+});
+
+describe('getSessionHistory projection (#4342 W4)', () => {
+  it('selects transcriptPurgedAt so the admin session list can label sessions emptied by retention', async () => {
+    const chain = {
+      from: vi.fn().mockReturnThis(),
+      where: vi.fn().mockReturnThis(),
+      orderBy: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockReturnThis(),
+      offset: vi.fn().mockResolvedValue([]),
+    };
+    vi.mocked(db.select).mockReturnValueOnce(chain as unknown as ReturnType<typeof db.select>);
+    await getSessionHistory('org-1', {}, { kind: 'all' });
+    const projection = vi.mocked(db.select).mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    expect(projection).toMatchObject({ transcriptPurgedAt: 'transcriptPurgedAt' });
+    expect(Object.keys(projection)).toContain('transcriptPurgedAt');
   });
 });

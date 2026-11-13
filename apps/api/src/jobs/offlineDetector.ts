@@ -22,6 +22,8 @@ import { DEFAULT_OFFLINE_THRESHOLD_MINUTES } from '../services/deviceLiveness';
 import { captureMessage } from '../services/sentry';
 import { throttledReporter } from '../services/sentryThrottle';
 import { EDITION_MIGRATION_SETTLE_INTERVAL } from '../services/editionMigrationWindow';
+import { requestDeviceGroupReevaluation } from './deviceGroupJobs';
+import { scheduleReinstallLinkClear } from '../services/reinstallCandidates/clearLinks';
 
 const { db } = dbModule;
 const runWithSystemDbAccess = async <T>(fn: () => Promise<T>): Promise<T> => {
@@ -735,13 +737,23 @@ export async function processReapUninstallIntent(): Promise<{
         // own-device-row-allowlisted: uninstall-intent-reaper
         await db
           .update(devices)
-          .set({ possibleReplacementOfDeviceId: null, updatedAt: new Date() })
+          // #8318: the reason and the detection time go with the link
+          // (devices_possible_replacement_reason_chk).
+          .set({
+            possibleReplacementOfDeviceId: null,
+            possibleReplacementReason: null,
+            possibleReplacementDetectedAt: null,
+            updatedAt: new Date(),
+          })
           .where(
             and(
               eq(devices.possibleReplacementOfDeviceId, candidate.id),
               eq(devices.orgId, candidate.orgId)
             )
           );
+        // #8318 §7.3: and links from the partner's other orgs, after commit,
+        // in a system context (services/reinstallCandidates/clearLinks.ts).
+        scheduleReinstallLinkClear(candidate.id);
 
         return true;
       });
@@ -749,6 +761,15 @@ export async function processReapUninstallIntent(): Promise<{
       if (!reaped) continue;
 
       totalDecommissioned++;
+
+      // #9933: dynamic groups leave out removed devices. The write above has
+      // committed (its context closed), so enqueue directly; never rejects.
+      void requestDeviceGroupReevaluation({
+        deviceId: candidate.id,
+        orgId: candidate.orgId,
+        eventType: 'device.created',
+        reason: 'device_decommissioned',
+      });
 
       createAuditLogAsync({
         orgId: candidate.orgId,

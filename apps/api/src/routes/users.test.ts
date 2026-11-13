@@ -1473,6 +1473,38 @@ describe('user routes', () => {
       expect(await res.json()).toMatchObject({ hasPassword: false });
     });
 
+    // #10650: the profile page decides whether to offer "Add backup" or
+    // "Remove" for the authenticator app off this flag. It is computed in SQL
+    // (the predicate's twin), so the secret column itself is never selected.
+    it('reports totpEnrolled from the SQL predicate without ever selecting the secret', async () => {
+      for (const totpEnrolled of [true, false]) {
+        vi.mocked(db.select).mockClear();
+        mockMeRow(meRow({ mfaEnabled: true, mfaMethod: 'passkey', passwordHash: 'hash', totpEnrolled }));
+
+        const res = await app.request('/users/me', {
+          headers: { Authorization: 'Bearer token' }
+        });
+        expect(res.status).toBe(200);
+        const body = await res.json() as Record<string, unknown>;
+        expect(body.totpEnrolled).toBe(totpEnrolled);
+        expect(body).not.toHaveProperty('mfaSecret');
+
+        const projection = vi.mocked(db.select).mock.calls[0]?.[0] as Record<string, unknown> | undefined;
+        expect(projection).toBeDefined();
+        expect(projection).toHaveProperty('totpEnrolled');
+        expect(projection).not.toHaveProperty('mfaSecret');
+      }
+    });
+
+    it('reports totpEnrolled false when the row predicate is null', async () => {
+      mockMeRow(meRow({ passwordHash: 'hash', totpEnrolled: null }));
+      const res = await app.request('/users/me', {
+        headers: { Authorization: 'Bearer token' }
+      });
+      expect(res.status).toBe(200);
+      expect((await res.json() as Record<string, unknown>).totpEnrolled).toBe(false);
+    });
+
     it('reports hasPassword true for a password user and never leaks the hash', async () => {
       mockMeRow(meRow({ passwordHash: '$argon2id$v=19$m=65536$abc' }));
 
@@ -1484,6 +1516,29 @@ describe('user routes', () => {
       expect(body.hasPassword).toBe(true);
       expect(body).not.toHaveProperty('passwordHash');
       expect(JSON.stringify(body)).not.toContain('argon2id');
+    });
+
+    // #11621: the list /me returns must be resolved exactly as requirePermission
+    // resolves it, or the web gates a control (Connect Desktop) differently from
+    // the route behind it. requirePermission passes the token scope, which is
+    // what lets a system-scope platform-admin session (no partner/org axis)
+    // resolve at all; without it /me answered [] for that session.
+    it.each([
+      [{ scope: 'partner', partnerId: 'partner-123', orgId: null }, { partnerId: 'partner-123', orgId: undefined, scope: 'partner' }],
+      [{ scope: 'organization', partnerId: null, orgId: 'org-9' }, { partnerId: undefined, orgId: 'org-9', scope: 'organization' }],
+      [{ scope: 'system', partnerId: null, orgId: null }, { partnerId: undefined, orgId: undefined, scope: 'system' }],
+    ])('resolves permissions on the same axis + scope as requirePermission (%o)', async (authShape, expected) => {
+      vi.mocked(authMiddleware).mockImplementation((c: any, next: any) => {
+        c.set('auth', { ...authShape, user: { id: 'user-123', email: 'admin@example.com' } });
+        return next();
+      });
+      mockMeRow(meRow());
+
+      const res = await app.request('/users/me', {
+        headers: { Authorization: 'Bearer token' }
+      });
+      expect(res.status).toBe(200);
+      expect(vi.mocked(getUserPermissions)).toHaveBeenCalledWith('user-123', expected);
     });
 
     // The web app hides billing nav and action buttons off this list. If /me
@@ -2708,6 +2763,8 @@ describe('user routes', () => {
       });
 
       expect(res.status).toBe(200);
+      // A pending email-address change is cancelled in the same transaction.
+      expect(capturedUpdates).toContainEqual(expect.objectContaining({ pendingEmail: null, pendingEmailRequestedAt: null }));
       // advanceUserEpochs-shaped update on `users` (auth_epoch increment).
       expect(capturedUpdates.some((v) => 'authEpoch' in v)).toBe(true);
       // revokeAllRefreshFamilies-shaped update on `refresh_token_families`
@@ -2796,6 +2853,8 @@ describe('user routes', () => {
       expect(res.status).toBe(200);
       const body = await res.json();
       expect(body.success).toBe(true);
+      // A role change signs the user out but leaves a pending email change.
+      expect(capturedUpdates.some((v) => 'pendingEmail' in v)).toBe(false);
       // advanceUserEpochs-shaped update on `users` (auth_epoch increment).
       expect(capturedUpdates.some((v) => 'authEpoch' in v)).toBe(true);
       // revokeAllRefreshFamilies-shaped update on `refresh_token_families`
@@ -3218,7 +3277,8 @@ describe('user routes', () => {
         set: (values: Record<string, unknown>) => {
           capturedUpdates.push(values);
           calls.push(
-            'authEpoch' in values ? 'epochs'
+            'pendingEmail' in values ? 'cancel-email-change'
+              : 'authEpoch' in values ? 'epochs'
               : 'revokedReason' in values ? 'families'
               : 'mfaSecret' in values ? 'clear-factors'
               : values.status === 'disabled' ? 'neutralize'
@@ -3348,7 +3408,7 @@ describe('user routes', () => {
       const res = await app.request(`/users/${TARGET}`, { method: 'DELETE', headers: { Authorization: 'Bearer token' } });
 
       expect(res.status).toBe(200);
-      expect(calls).toEqual(['delete-membership', 'epochs', 'families', 'neutralize', 'clear-factors', 'delete-passkeys']);
+      expect(calls).toEqual(['delete-membership', 'epochs', 'families', 'cancel-email-change', 'neutralize', 'clear-factors', 'delete-passkeys']);
       const epochs = capturedUpdates.find((v) => 'authEpoch' in v)!;
       expect(epochs).toHaveProperty('mfaEpoch'); // D3: neutralization bumps BOTH epochs
       expect(capturedUpdates.filter((v) => 'authEpoch' in v)).toHaveLength(1); // exactly one bump — no double-bump
@@ -3363,7 +3423,7 @@ describe('user routes', () => {
       const res = await app.request('/users/11111111-1111-1111-1111-111111111111', { method: 'DELETE', headers: { Authorization: 'Bearer token' } });
 
       expect(res.status).toBe(200);
-      expect(calls).toEqual(['delete-membership', 'epochs', 'families']);
+      expect(calls).toEqual(['delete-membership', 'epochs', 'families', 'cancel-email-change']);
       expect(capturedUpdates.some((v) => v.status === 'disabled')).toBe(false);
       expect(calls).not.toContain('delete-passkeys');
     });
@@ -3459,7 +3519,9 @@ describe('user routes', () => {
         set: (values: Record<string, unknown>) => {
           capturedUpdates.push(values);
           calls.push(
-            'mfaEpoch' in values
+            'pendingEmail' in values
+              ? 'cancel-email-change'
+              : 'mfaEpoch' in values
               ? 'epochs'
               : 'revokedReason' in values
                 ? 'families'
@@ -3509,7 +3571,7 @@ describe('user routes', () => {
       // One transaction: target membership locked FIRST (rank check made
       // atomic with the reset) → mfa_epoch bump → families → Office binding
       // revoke → users clear → passkey delete.
-      expect(calls).toEqual(['lock-membership', 'epochs', 'families', 'office-binding', 'clear-factors', 'delete-passkeys']);
+      expect(calls).toEqual(['lock-membership', 'epochs', 'families', 'office-binding', 'clear-factors', 'delete-passkeys', 'cancel-email-change']);
       expect(capturedUpdates.some((v) => v.mfaEnabled === false && v.mfaSecret === null && v.phoneNumber === null && v.phoneVerified === false)).toBe(true);
       expect(capturedUpdates.some((v) => 'mfaEpoch' in v)).toBe(true);
       expect(capturedUpdates.some((v) => 'revokedReason' in v)).toBe(true);

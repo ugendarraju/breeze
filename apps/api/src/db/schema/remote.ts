@@ -53,7 +53,15 @@ export const remoteSessions = pgTable('remote_sessions', {
   // stop result lands. A start is refused unless this is 'none'.
   terminationPhase: text('termination_phase').$type<'none' | 'pending' | 'confirmed'>().notNull().default('none'),
   iceCandidates: jsonb('ice_candidates').default([]),
+  // The session's original start: the first agent answer, or the first
+  // WebSocket-fallback start. Never moved by a reconnect; the lease hard
+  // deadline (max duration) is measured from it (#11113).
   startedAt: timestamp('started_at'),
+  // The latest start attempt: every committed offer or WebSocket-fallback start,
+  // and every agent answer. Creation time until the first attempt. Stale cleanup
+  // and the pending/connecting reaper are measured from it, so a session that is
+  // renegotiating is not ended as stale (#11149).
+  lastStartAttemptAt: timestamp('last_start_attempt_at', { withTimezone: true }).defaultNow().notNull(),
   endedAt: timestamp('ended_at'),
   durationSeconds: integer('duration_seconds'),
   bytesTransferred: bigint('bytes_transferred', { mode: 'bigint' }),
@@ -82,6 +90,11 @@ export const remoteSessions = pgTable('remote_sessions', {
   index('remote_sessions_device_live_idx')
     .on(t.deviceId)
     .where(remoteSessionIsLive(t.status)),
+  // #4342 W5 retention (2027-01-23-130000, built CONCURRENTLY): ended-session
+  // age scan (jobs/historyRetention/accessHistory.ts).
+  index('remote_sessions_terminal_age_idx')
+    .on(sql`(COALESCE(${t.endedAt}, ${t.createdAt}))`)
+    .where(sql`${t.status} IN ('disconnected', 'failed', 'denied')`),
   check(
     'remote_sessions_desktop_prompt_mode_check',
     sql`${t.desktopPromptMode} IS NULL OR ${t.desktopPromptMode} IN ('off', 'notify', 'consent')`,

@@ -101,13 +101,18 @@ An S3 destination's **Path Prefix** decides where its new snapshots are written:
 Each snapshot records the location it was written to, and Breeze reads, verifies, restores and cleans it up there for its whole life. As a result:
 
 - **Existing snapshots are never moved.** Snapshots taken before you set or changed the prefix stay where they are and keep restoring normally.
-- **Changing the prefix makes the next backup a full backup.** An incremental never builds on a snapshot stored under a different prefix, so the first run scheduled after a change uploads everything again. An incremental run that was already scheduled against a base under the old prefix when you changed it fails with a message saying so; the next scheduled run takes the full backup.
+- **Changing the prefix makes the next backup a full backup.** An incremental never builds on a snapshot stored under a different prefix, so the first run scheduled after a change uploads everything again (see [When a run uploads everything again](/backup/incremental-backups/#when-a-run-uploads-everything-again)). An incremental run that was already scheduled against a base under the old prefix when you changed it fails with a message saying so; the next scheduled run takes the full backup.
 - **Several organizations can share one bucket** with a prefix each. The storage cleanup sweep lists and deletes under one prefix at a time and never touches another prefix's objects.
 - **Scope IAM policies to the prefix.** A policy that only allows `bucket/snapshots/*` stops working once a prefix is set; allow `bucket/<prefix>/*` instead. **Test connection** writes a probe object under the prefix, so it catches this before the first backup fails.
 
 A valid prefix is at most 256 characters, made of `/`-separated segments that use only letters, digits and `! _ . * ' ( ) -`. Leading and trailing slashes are ignored. Empty segments (`a//b`), `.` and `..` are not allowed, and no segment may be `snapshots` (in any letter case), so one prefix can never contain another prefix's snapshots. The form flags an invalid prefix as you type and the API rejects it on save. A destination saved with an invalid prefix by an older version is not backed up to the bucket root instead: its backups fail with a message asking you to correct the prefix, and **Test connection** fails naming the rule the prefix breaks.
 
-Bare-metal recovery of a snapshot stored under a prefix always downloads through Breeze (token-mode download), which is the default for recovery media. Agent-side tools that read a bucket directly with a hand-supplied configuration (the `breeze-backup rebuild --provider-config` command and the `agent.yaml` backup manager) do not apply the prefix.
+Bare-metal recovery of a snapshot stored under a prefix always downloads through Breeze (token-mode download), which is the default for recovery media. Agent-side tools that read a bucket directly with a hand-supplied configuration take the prefix as their own option, and never read it from a pasted `providerConfig.prefix`:
+
+- **`breeze-backup rebuild --provider-config`**: pass `--key-prefix <prefix>`, where `<prefix>` is the path in front of `snapshots/<snapshot-id>/` in the bucket. That is the prefix the snapshot was **written** under. After a prefix change it differs from the destination's current Path Prefix. Snapshots taken before the prefix was set sit at the bucket root and need no `--key-prefix`. If the configuration file has a `providerConfig.prefix` and you leave out `--key-prefix`, the command prints a note and reads from the bucket root.
+- **The `agent.yaml` backup manager** (`backup_provider: s3`): set `backup_s3_prefix: <prefix>` to write and read its snapshots under `<prefix>/snapshots/`. Snapshots it took before you set the prefix stay at the bucket root, and the manager no longer sees them. If the prefix is invalid, the manager is disabled: backup commands that need it fail with a message naming `backup_s3_prefix`, and a local vault that uses it as its source does not start. It never falls back to the bucket root.
+
+Both options follow the same prefix rules as the destination form, and the agent maps keys under the prefix exactly as the server does.
 
 ### How destination credentials are stored
 
@@ -142,6 +147,57 @@ After creating a configuration, test that Breeze can reach the storage target:
 <Aside type="tip">
   Always test connectivity after creating or updating a configuration. This catches credential errors or network issues before your first scheduled backup fails.
 </Aside>
+
+---
+
+## Local Destinations on the API Server
+
+A local destination's **Local Path** is the path the agent uses on the device. The API server never uses that path for its own file access.
+
+Some features read a local destination from the API server: the connectivity test, file-level browsing of a snapshot (index hydration), server-side integrity verification, the storage sweep and reconciliation, token-based recovery downloads, and bare-metal recovery media. These work only when the self-hosting operator sets [`BACKUP_LOCAL_ROOT`](/deploy/environment/#backup-enterprise-agent-backup) and provides one directory per destination:
+
+```text
+<BACKUP_LOCAL_ROOT>/<organization ID>/<storage configuration ID>/
+```
+
+- `BACKUP_LOCAL_ROOT` must be an absolute path and not `/`. The organization and configuration directories must already exist; Breeze does not create them.
+- Breeze takes both IDs from its own records, not from the destination settings. Each destination can only reach its own directory.
+- Symbolic links are refused at every level below `BACKUP_LOCAL_ROOT`, including the per-destination directory itself, and so is anything that is not a regular file or directory. Use a bind mount to expose existing storage there, and mount it with `nodev,nosuid`.
+- Mount the same storage at the same path in every `api` and `worker` container.
+- Two configurations of one organization may share storage: mount it at each configuration's directory. The storage sweep handles each directory on its own. It only reclaims a snapshot that belongs to that configuration or that no Breeze record names; a snapshot another configuration recorded, retired or reserved is left for that configuration's own sweep. A snapshot that one configuration retired but another still records as live is kept, and its retirement stays open, until no configuration records it as live.
+- Keep each organization's storage separate at the storage level (its own share, volume or dataset). Never mount one organization's storage in another organization's directory. Breeze reads whatever file is in a destination's directory as that organization's data, including a hard link to a file stored elsewhere on the same filesystem.
+- Linux API servers (the shipped containers) are supported. macOS works for development only. On Windows the API refuses server-side local access.
+
+Without `BACKUP_LOCAL_ROOT` (the default, and always the case on the hosted service), these features are off for local destinations. The connectivity test reports the destination as **Not tested here** rather than as a failure, because only the agent uses its Local Path. Server-side integrity verification stays pending. The storage sweep skips the destination, keeps its objects and deletes nothing. Agents keep writing backups to the device's local path.
+
+With `BACKUP_LOCAL_ROOT` set, the connectivity test checks that the destination's directory exists and that the API can read and write it. It creates no files or directories, and it does not test whether the device can reach its Local Path. It fails with one of two messages:
+
+- **The API-side directory for this destination does not exist**: create `<BACKUP_LOCAL_ROOT>/<organization ID>/<configuration ID>/` on every `api` and `worker` server.
+- **The API-side directory for this destination cannot be used**: it is a symbolic link (or sits below one), is not a directory, or the API cannot read and write it.
+
+The other server-side features stop for that destination with the message *API local backup storage is unavailable for this destination* until the directory is fixed.
+
+### Upgrading an install that uses API-side local storage
+
+Earlier versions read local destinations on the API server from the **Local Path** setting. After upgrading, those reads stop until the directories above exist. Breeze does not move data or rewrite settings for you:
+
+<Steps>
+1. List the local configurations whose API-side features you use (configuration ID, organization ID and current path).
+2. For each one, create `<BACKUP_LOCAL_ROOT>/<organization ID>/<configuration ID>/` and bind-mount the existing storage there, in every `api` and `worker` container. The data stays where it is.
+3. Set `BACKUP_LOCAL_ROOT` and restart the `api` and `worker` containers.
+4. Run the connectivity test for each configuration. Then check a file-level browse, a recovery download and the next storage sweep in the `worker` log. Each local destination is reported as `Identity local::<path> config <configuration ID>`, followed by one of:
+   - the number of objects deleted (a debug line when it is zero);
+   - `skipped — no API-side local storage directory for this destination` while its directory has not been created, or `skipped — API-side local storage is not configured` while `BACKUP_LOCAL_ROOT` is unset. Nothing is read or deleted;
+   - `listing failed` (an error, also sent to error tracking) when the directory exists but cannot be used, for example because it is a symbolic link. Fix the directory; nothing is deleted until then.
+</Steps>
+
+Leave the **Local Path** setting unchanged; agents still use it. Do not delete objects or edit storage settings to make a test pass.
+
+A snapshot whose storage configuration was deleted, or that was recorded without a configuration, has no destination directory. It stays unavailable for API-side local reads until its configuration link is restored.
+
+When a configuration moves to another organization, its directory moves to `<BACKUP_LOCAL_ROOT>/<new organization ID>/<configuration ID>/`. Snapshots and retirements recorded under the earlier organization stay in that directory and the storage sweep never reclaims them. Once they are no longer needed, an operator can remove those snapshot folders (`snapshots/<snapshot ID>/`) by hand.
+
+To turn API-side local access off again, unset `BACKUP_LOCAL_ROOT`. The stored data is not touched.
 
 ---
 

@@ -1,13 +1,11 @@
-import { createReadStream } from 'node:fs';
-import { stat } from 'node:fs/promises';
-import { resolve as resolvePath } from 'node:path';
 import { pipeline } from 'node:stream';
 import { createGunzip } from 'node:zlib';
 import { GetObjectCommand } from '@aws-sdk/client-s3';
 import { createGuardedS3Client } from './guardedS3Client';
+import { openApiLocalBackupObject } from './apiLocalBackupStorage';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { coerceS3EndpointUrl, deriveS3RegionFromEndpoint } from '@breeze/shared';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, ne } from 'drizzle-orm';
 import { db } from '../db';
 import { backupSnapshotFiles, backupSnapshotOrigins, backupSnapshots, recoveryTokens } from '../db/schema';
 import { backupSnapshotAttestations } from '../db/schema/backupSnapshotAttestations';
@@ -101,6 +99,9 @@ export async function authorizeExternalReference(
     .where(and(
       eq(backupSnapshotFiles.snapshotDbId, args.snapshotDbId),
       eq(backupSnapshotFiles.backupPath, args.key),
+      // A content-less row (directory or symlink entry, #11235) names no
+      // object: its empty backup_path is never a key.
+      ne(backupSnapshotFiles.backupPath, ''),
       boundIndexCondition(boundDigest),
     ))
     .limit(1);
@@ -134,15 +135,6 @@ export async function authorizeExternalReference(
 
 function isDownloadEligibleStatus(status: string, authenticatedAt: Date | null): boolean {
   return status === 'authenticated' || (status === 'active' && authenticatedAt !== null);
-}
-
-function ensureContainedLocalPath(rootPath: string, relativePath: string): string {
-  const base = resolvePath(rootPath);
-  const resolved = resolvePath(base, relativePath);
-  if (resolved !== base && !resolved.startsWith(`${base}/`)) {
-    throw new Error('path traversal detected');
-  }
-  return resolved;
 }
 
 function buildS3Client(config: {
@@ -452,11 +444,12 @@ export async function getAuthenticatedRecoveryDownloadTarget(
       return { unavailable: true, reason: 'Snapshot storage is misconfigured.' } as const;
     }
 
-    const filePath = ensureContainedLocalPath(
-      rootPath,
-      origin ? keyUnderRecordedRoot(normalizedRemotePath, origin.storagePrefix, origin.snapshotId) : normalizedRemotePath
+    // Opened once; the response streams from this handle.
+    const object = await openApiLocalBackupObject(
+      origin ? keyUnderRecordedRoot(normalizedRemotePath, origin.storagePrefix, origin.snapshotId) : normalizedRemotePath,
+      tokenRow.orgId,
+      resolved.config?.orgId === tokenRow.orgId ? resolved.localConfigId : undefined
     );
-    const fileInfo = await stat(filePath);
     const fileName = normalizedRemotePath.split('/').pop() || 'recovery-object';
     const contentType = normalizedRemotePath.endsWith('.json') ? 'application/json' : 'application/octet-stream';
 
@@ -474,12 +467,12 @@ export async function getAuthenticatedRecoveryDownloadTarget(
     // streams instead (see the route handler in routes/backup/bmr.ts, which
     // only sets the header when contentLength is non-null).
     if (normalizedRemotePath.endsWith('.gz')) {
-      const rawStream = createReadStream(filePath);
+      const rawStream = object.handle.createReadStream({ autoClose: true });
       const gunzip = createGunzip();
       // `pipeline` (not a bare `.pipe()`) so a failure on EITHER side closes
       // the other: a corrupt/truncated gzip payload destroys `gunzip` but
       // `.pipe()` alone never destroys its *source* in response, which would
-      // otherwise leak the open file descriptor from `createReadStream`
+      // otherwise leak the open file descriptor behind the read stream
       // until GC finalization — the exact case the "corrupt gzip" test
       // below exercises. The callback below only needs to swallow the
       // already-consumer-visible error (surfaced via `gunzip`'s own 'error'
@@ -500,9 +493,9 @@ export async function getAuthenticatedRecoveryDownloadTarget(
       unavailable: false,
       type: 'stream' as const,
       fileName,
-      contentLength: fileInfo.size,
+      contentLength: object.size,
       contentType,
-      stream: createReadStream(filePath),
+      stream: object.handle.createReadStream({ autoClose: true }),
     };
   }
 

@@ -87,9 +87,9 @@ vi.mock('../services', () => {
   mfaLimiter: { limit: 5, windowSeconds: 300 },
   // Task 10: per-account lockout helpers. Default mocks mirror the
   // "no failures, not locked" happy path so existing tests keep working.
-  recordAccountFailure: vi.fn().mockResolvedValue({ count: 1, locked: false, newlyLocked: false }),
+  reserveAccountAttempt: vi.fn().mockResolvedValue({ allowed: true, count: 1, reachesLimit: false }),
+  releaseAccountAttempt: vi.fn().mockResolvedValue(undefined),
   clearAccountFailures: vi.fn().mockResolvedValue(undefined),
-  isAccountLocked: vi.fn().mockResolvedValue(false),
   ACCOUNT_LOCKOUT_MAX: 5,
   ACCOUNT_LOCKOUT_WINDOW_SECONDS: 15 * 60,
   getAccountLockoutMax: vi.fn(() => 5),
@@ -461,9 +461,9 @@ import {
   rateLimiter,
   getRedis,
   getUserEpochs,
-  recordAccountFailure,
+  reserveAccountAttempt,
+  releaseAccountAttempt,
   clearAccountFailures,
-  isAccountLocked,
   consumeRecoveryCode,
   RecoveryCodeInvalidError,
   finishAuthIssuance,
@@ -588,8 +588,8 @@ describe('auth routes', () => {
     vi.mocked(enforceIpAllowlist).mockResolvedValue({ decision: 'allow' });
     // Task 10: reset lockout-helper mocks to the "not locked" happy path so
     // each test starts from a clean baseline.
-    vi.mocked(isAccountLocked).mockResolvedValue(false);
-    vi.mocked(recordAccountFailure).mockResolvedValue({ count: 1, locked: false, newlyLocked: false });
+    vi.mocked(reserveAccountAttempt).mockResolvedValue({ allowed: true, count: 1, reachesLimit: false });
+    vi.mocked(releaseAccountAttempt).mockResolvedValue(undefined);
     vi.mocked(clearAccountFailures).mockResolvedValue(undefined);
     sendAccountLockedMock.mockClear();
     vi.mocked(db.transaction).mockReset();
@@ -1151,7 +1151,7 @@ describe('auth routes', () => {
     // locked account still mints nothing); only the externally visible response
     // is now the same generic 401 every other denial returns.
     it('Task 10 + SR2-23: denies a locked account with the generic 401 (even on correct password) — no lockout oracle', async () => {
-      vi.mocked(isAccountLocked).mockResolvedValue(true);
+      vi.mocked(reserveAccountAttempt).mockResolvedValue({ allowed: false, count: 6, reachesLimit: false });
       vi.mocked(verifyPassword).mockResolvedValue(true);
       vi.mocked(db.select).mockReturnValue({
         from: vi.fn().mockReturnValue({
@@ -1191,7 +1191,7 @@ describe('auth routes', () => {
       expect(createTokenPair).not.toHaveBeenCalled();
     });
 
-    it('Task 10: bad password bumps the per-account failure counter and triggers a lockout email exactly once on newlyLocked', async () => {
+    it('Task 10: a bad password on the attempt that reaches the limit triggers the lockout email', async () => {
       vi.mocked(verifyPassword).mockResolvedValue(false);
       vi.mocked(db.select).mockReturnValue({
         from: vi.fn().mockReturnValue({
@@ -1209,7 +1209,7 @@ describe('auth routes', () => {
       } as any);
 
       // Simulate the threshold-crossing attempt.
-      vi.mocked(recordAccountFailure).mockResolvedValueOnce({ count: 5, locked: true, newlyLocked: true });
+      vi.mocked(reserveAccountAttempt).mockResolvedValueOnce({ allowed: true, count: 5, reachesLimit: true });
 
       const res = await app.request('/auth/login', {
         method: 'POST',
@@ -1224,7 +1224,7 @@ describe('auth routes', () => {
       // Wait for the fire-and-forget helper to settle.
       await new Promise((resolve) => setImmediate(resolve));
 
-      expect(recordAccountFailure).toHaveBeenCalledWith(expect.anything(), 'victim@x.com');
+      expect(reserveAccountAttempt).toHaveBeenCalledWith(expect.anything(), 'victim@x.com');
       expect(sendAccountLockedMock).toHaveBeenCalledTimes(1);
       expect(sendAccountLockedMock).toHaveBeenCalledWith(expect.objectContaining({
         to: 'victim@x.com',
@@ -1250,10 +1250,9 @@ describe('auth routes', () => {
         })
       } as any);
 
-      // Already-locked attempts (count above threshold, newlyLocked=false).
-      // In a real flow these would hit the early lockout check first, but
-      // the contract for the helper is "no email on already-locked".
-      vi.mocked(recordAccountFailure).mockResolvedValue({ count: 7, locked: true, newlyLocked: false });
+      // Attempts after the one that reached the limit are refused and send
+      // no further email.
+      vi.mocked(reserveAccountAttempt).mockResolvedValue({ allowed: false, count: 7, reachesLimit: false });
 
       await app.request('/auth/login', {
         method: 'POST',
@@ -1318,7 +1317,7 @@ describe('auth routes', () => {
 
       expect(res.status).toBe(401);
       await new Promise((resolve) => setImmediate(resolve));
-      expect(recordAccountFailure).not.toHaveBeenCalled();
+      expect(reserveAccountAttempt).not.toHaveBeenCalled();
       expect(sendAccountLockedMock).not.toHaveBeenCalled();
     });
 
@@ -1637,7 +1636,26 @@ describe('auth routes', () => {
       expect(consumeMFAToken).not.toHaveBeenCalled();
     });
 
-    it('honors an explicitly authorized TOTP switch from an SMS primary', async () => {
+    // #10650: the switch a passkey-primary user makes when the passkey is not
+    // available — the backup authenticator app completes the login.
+    it('honors an explicitly authorized TOTP switch from a passkey primary holding the backup authenticator', async () => {
+      liveUserRow = { ...baseLiveUserRow, mfaMethod: 'passkey' };
+      getMock.mockResolvedValue(pendingRecord({ mfaMethod: 'passkey', passkeyAvailable: true }));
+
+      const res = await postMfaVerify({
+        tempToken: 'temp-token',
+        code: '123456',
+        method: 'totp',
+      });
+
+      expect(res.status).toBe(200);
+      expect(consumeMFAToken).toHaveBeenCalledWith('PLAINSECRET123', '123456', 'user-1');
+    });
+
+    // #10650: SMS enable clears the secret, so a secret beside an SMS primary
+    // is stale and is not a factor (the shared predicate). Refused with the
+    // uniform body, non-terminally, and no code is consumed.
+    it('refuses a stale TOTP secret beside an SMS primary without consuming a code or the challenge', async () => {
       const checkVerificationCode = vi.fn();
       vi.mocked(getTwilioService).mockReturnValue({
         sendVerificationCode: vi.fn(),
@@ -1656,9 +1674,11 @@ describe('auth routes', () => {
         method: 'totp',
       });
 
-      expect(res.status).toBe(200);
-      expect(consumeMFAToken).toHaveBeenCalledWith('PLAINSECRET123', '123456', 'user-1');
+      expect(res.status).toBe(400);
+      expect(await res.json()).toMatchObject({ code: 'mfa_code_invalid' });
+      expect(consumeMFAToken).not.toHaveBeenCalled();
       expect(checkVerificationCode).not.toHaveBeenCalled();
+      expect(delMock).not.toHaveBeenCalled();
     });
 
     it('rejects recovery when the pending challenge did not authorize it without consuming the challenge or a code', async () => {
@@ -1975,6 +1995,34 @@ describe('auth routes', () => {
   // the code with the CONSUMING verifier so the accepted time step is
   // recorded and cannot be replayed at login within its validity window.
   describe('POST /auth/mfa/verify — setup confirmation consumes the TOTP step (SR2-24)', () => {
+    it.each([403, 503])('returns the request admission response (%s) without confirming setup', async (status) => {
+      const mockRedis = { get: vi.fn(), del: vi.fn(), setex: vi.fn() };
+      vi.mocked(getRedis).mockReturnValue(mockRedis as any);
+      // The real middleware resolves the caller before a later admission
+      // check (network allowlist, budget) returns its own response.
+      vi.mocked(authMiddleware).mockImplementationOnce(async (c: any) => {
+        c.set('auth', {
+          user: { id: 'user-123', email: 'test@example.com', name: 'Test User' },
+          token: { sid: 'family-123', sub: 'user-123', type: 'access', aep: 1, mep: 1 },
+          orgId: null,
+        });
+        return c.json({ error: 'Admission refused' }, status);
+      });
+
+      const res = await app.request('/auth/mfa/verify', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer valid-token', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: '123456' }),
+      });
+
+      expect(res.status).toBe(status);
+      expect(await res.json()).toEqual({ error: 'Admission refused' });
+      expect(mockRedis.get).not.toHaveBeenCalled();
+      expect(mockRedis.del).not.toHaveBeenCalled();
+      expect(consumeMFAToken).not.toHaveBeenCalled();
+      expect(completeInitialMfaEnrollment).not.toHaveBeenCalled();
+    });
+
     it('rejects policy drift before consuming a code or enrollment authority', async () => {
       const policySpy = vi.spyOn(mfaPolicyModule, 'getEffectiveMfaPolicy').mockResolvedValueOnce({
         required: true,
@@ -1983,11 +2031,21 @@ describe('auth routes', () => {
         source: { roleForceMfa: true, settingsRequireMfa: true, killSwitchOff: false, graceWindow: 'none' as const },
       });
       const mockRedis = {
-        get: vi.fn().mockResolvedValue(JSON.stringify({ secret: 'SETUPSECRET123', authEpoch: 1, mfaEpoch: 1 })),
+        get: vi.fn().mockResolvedValue(JSON.stringify({ secret: 'SETUPSECRET123', authEpoch: 1, mfaEpoch: 1, sid: 'family-123', role: 'initial' })),
         del: vi.fn(),
         setex: vi.fn(),
       };
       vi.mocked(getRedis).mockReturnValue(mockRedis as any);
+      // An ordinary password account with no factor yet: the enrollment-proof
+      // gate (#10650 moved it ahead of the policy check) passes, so the policy
+      // is what refuses.
+      vi.mocked(db.select).mockReturnValue({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue([{ passwordHash: '$argon2id$hash' }])
+          })
+        })
+      } as any);
 
       const res = await app.request('/auth/mfa/verify', {
         method: 'POST',
@@ -2005,7 +2063,7 @@ describe('auth routes', () => {
     it('confirms setup via the consuming consumeMFAToken verifier', async () => {
       const mockRedis = {
         get: vi.fn().mockResolvedValue(JSON.stringify({
-          secret: 'SETUPSECRET123', authEpoch: 1, mfaEpoch: 1,
+          secret: 'SETUPSECRET123', authEpoch: 1, mfaEpoch: 1, sid: 'family-123', role: 'initial',
           recoveryCodes: ['CODE-0001', 'CODE-0002']
         })),
         del: vi.fn().mockResolvedValue(1),
@@ -2057,7 +2115,7 @@ describe('auth routes', () => {
     function mockPasswordlessPendingSetup(row: Record<string, unknown> = {}) {
       const mockRedis = {
         get: vi.fn().mockResolvedValue(JSON.stringify({
-          secret: 'SETUPSECRET123', authEpoch: 1, mfaEpoch: 1,
+          secret: 'SETUPSECRET123', authEpoch: 1, mfaEpoch: 1, sid: 'family-123', role: 'initial',
           recoveryCodes: ['CODE-0001', 'CODE-0002']
         })),
         del: vi.fn().mockResolvedValue(1),
@@ -2197,7 +2255,7 @@ describe('auth routes', () => {
     function mockPendingSetup() {
       const mockRedis = {
         get: vi.fn().mockResolvedValue(JSON.stringify({
-          secret: 'SETUPSECRET123', authEpoch: 1, mfaEpoch: 1,
+          secret: 'SETUPSECRET123', authEpoch: 1, mfaEpoch: 1, sid: 'family-123', role: 'initial',
           recoveryCodes: ['CODE-0001', 'CODE-0002']
         })),
         del: vi.fn().mockResolvedValue(1),
@@ -2218,7 +2276,7 @@ describe('auth routes', () => {
       vi.mocked(db.select).mockReturnValue({
         from: vi.fn().mockReturnValue({
           where: vi.fn().mockReturnValue({
-            limit: vi.fn().mockResolvedValue([{ passwordHash: '$argon2id$hash', mfaEnabled: true, passkeyCount: 0 }])
+            limit: vi.fn().mockResolvedValue([{ passwordHash: '$argon2id$hash', mfaEnabled: false, passkeyCount: 1 }])
           })
         })
       } as any);
@@ -2240,7 +2298,7 @@ describe('auth routes', () => {
       vi.mocked(db.select).mockReturnValue({
         from: vi.fn().mockReturnValue({
           where: vi.fn().mockReturnValue({
-            limit: vi.fn().mockResolvedValue([{ passwordHash: '$argon2id$hash', mfaEnabled: true, passkeyCount: 0 }])
+            limit: vi.fn().mockResolvedValue([{ passwordHash: '$argon2id$hash', mfaEnabled: false, passkeyCount: 1 }])
           })
         })
       } as any);
@@ -2266,7 +2324,7 @@ describe('auth routes', () => {
       vi.mocked(db.select).mockReturnValue({
         from: vi.fn().mockReturnValue({
           where: vi.fn().mockReturnValue({
-            limit: vi.fn().mockResolvedValue([{ passwordHash: '$argon2id$hash', mfaEnabled: true, passkeyCount: 0 }])
+            limit: vi.fn().mockResolvedValue([{ passwordHash: '$argon2id$hash', mfaEnabled: false, passkeyCount: 1 }])
           })
         })
       } as any);
@@ -3255,7 +3313,7 @@ describe('auth routes', () => {
       const setupRecoveryCodes = ['CODE-0001', 'CODE-0002'];
       const mockRedis = {
         get: vi.fn().mockResolvedValue(JSON.stringify({
-          secret: 'MFASECRET123', authEpoch: 1, mfaEpoch: 1,
+          secret: 'MFASECRET123', authEpoch: 1, mfaEpoch: 1, sid: 'family-123', role: 'initial',
           recoveryCodes: setupRecoveryCodes
         })),
         setex: vi.fn(),
@@ -3331,7 +3389,7 @@ describe('auth routes', () => {
       });
       vi.mocked(verifyPassword).mockResolvedValue(true);
       vi.mocked(getRedis).mockReturnValue({
-        get: vi.fn().mockResolvedValue(JSON.stringify({ secret: 'SETUPSECRET123', authEpoch: 1, mfaEpoch: 1 })),
+        get: vi.fn().mockResolvedValue(JSON.stringify({ secret: 'SETUPSECRET123', authEpoch: 1, mfaEpoch: 1, sid: 'family-123', role: 'initial' })),
         del: vi.fn(),
         setex: vi.fn(),
       } as any);
@@ -3373,7 +3431,7 @@ describe('auth routes', () => {
         .mockReturnValue({
           from: vi.fn().mockReturnValue({
             where: vi.fn().mockReturnValue({
-              limit: vi.fn().mockResolvedValue([{ passwordHash: '$argon2id$hash', mfaEnabled: true, passkeyCount: 0 }])
+              limit: vi.fn().mockResolvedValue([{ passwordHash: '$argon2id$hash', mfaEnabled: false, passkeyCount: 1 }])
             })
           })
         } as any);
@@ -3395,7 +3453,7 @@ describe('auth routes', () => {
       const setupRecoveryCodes = ['CODE-0001', 'CODE-0002'];
       const mockRedis = {
         get: vi.fn().mockResolvedValue(JSON.stringify({
-          secret: 'MFASECRET123', authEpoch: 1, mfaEpoch: 1,
+          secret: 'MFASECRET123', authEpoch: 1, mfaEpoch: 1, sid: 'family-123', role: 'initial',
           recoveryCodes: setupRecoveryCodes
         })),
         setex: vi.fn(),
@@ -3408,38 +3466,16 @@ describe('auth routes', () => {
       // the terminal factor write.
       vi.mocked(validateStepUpGrant).mockResolvedValueOnce(true);
       vi.mocked(consumeStepUpGrant).mockResolvedValueOnce(true);
-      vi.mocked(db.select)
-        .mockReturnValueOnce({
-          from: vi.fn().mockReturnValue({
-            where: vi.fn().mockReturnValue({
-              limit: vi.fn().mockResolvedValue([{ passwordHash: '$argon2id$hash' }])
-            })
+      // One re-servable row for every read on this path (password reprompt,
+      // userIsMfaProtected at validate and at consume, and the live-row role
+      // check): a password account protected by a passkey, MFA flag off.
+      vi.mocked(db.select).mockReturnValue({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue([{ passwordHash: '$argon2id$hash', mfaEnabled: false, passkeyCount: 1 }])
           })
-        } as any)
-        // userIsMfaProtected runs TWICE now (non-consuming validate at the
-        // gate, then the single-use consume at the terminal factor write), so
-        // the ordered queue carries two protected rows before falling back.
-        .mockReturnValueOnce({
-          from: vi.fn().mockReturnValue({
-            where: vi.fn().mockReturnValue({
-              limit: vi.fn().mockResolvedValue([{ passwordHash: '$argon2id$hash', mfaEnabled: true, passkeyCount: 0 }])
-            })
-          })
-        } as any)
-        .mockReturnValueOnce({
-          from: vi.fn().mockReturnValue({
-            where: vi.fn().mockReturnValue({
-              limit: vi.fn().mockResolvedValue([{ passwordHash: '$argon2id$hash', mfaEnabled: true, passkeyCount: 0 }])
-            })
-          })
-        } as any)
-        .mockReturnValue({
-          from: vi.fn().mockReturnValue({
-            where: vi.fn().mockReturnValue({
-              limit: vi.fn().mockResolvedValue([{ passwordHash: '$argon2id$hash' }])
-            })
-          })
-        } as any);
+        })
+      } as any);
       vi.mocked(db.update).mockReturnValue({
         set: vi.fn().mockReturnValue({
           where: vi.fn(() => Object.assign(Promise.resolve(undefined), {
@@ -3469,7 +3505,7 @@ describe('auth routes', () => {
     function mockProtectedUserWithPendingSetup() {
       const mockRedis = {
         get: vi.fn().mockResolvedValue(JSON.stringify({
-          secret: 'MFASECRET123', authEpoch: 1, mfaEpoch: 1,
+          secret: 'MFASECRET123', authEpoch: 1, mfaEpoch: 1, sid: 'family-123', role: 'initial',
           recoveryCodes: ['CODE-0001', 'CODE-0002']
         })),
         setex: vi.fn(),
@@ -3481,7 +3517,7 @@ describe('auth routes', () => {
         from: vi.fn().mockReturnValue({
           where: vi.fn().mockReturnValue({
             limit: vi.fn().mockResolvedValue([
-              { passwordHash: '$argon2id$hash', mfaEnabled: true, passkeyCount: 0 }
+              { passwordHash: '$argon2id$hash', mfaEnabled: false, passkeyCount: 1 }
             ])
           })
         })
@@ -3738,7 +3774,7 @@ describe('auth routes', () => {
         expect(mockRedis.setex).toHaveBeenCalledWith(
           'mfa:setup:user-123',
           600,
-          JSON.stringify({ secret: 'MFASECRET123', authEpoch: 1, mfaEpoch: 1 }),
+          JSON.stringify({ secret: 'MFASECRET123', authEpoch: 1, mfaEpoch: 1, sid: 'family-123', role: 'initial' }),
         );
         expect(verifyPassword).not.toHaveBeenCalled();
         expect(validateStepUpGrant).toHaveBeenCalledWith(
@@ -3791,7 +3827,7 @@ describe('auth routes', () => {
         const setupRecoveryCodes = ['CODE-0001', 'CODE-0002'];
         const mockRedis = {
           get: vi.fn().mockResolvedValue(JSON.stringify({
-            secret: 'MFASECRET123', authEpoch: 1, mfaEpoch: 1,
+            secret: 'MFASECRET123', authEpoch: 1, mfaEpoch: 1, sid: 'family-123', role: 'initial',
             recoveryCodes: setupRecoveryCodes
           })),
           setex: vi.fn(),
@@ -3842,7 +3878,7 @@ describe('auth routes', () => {
       it('POST /auth/mfa/enable returns the distinct expired-grant 400 for a passwordless account with an invalid/expired grant (no factor written)', async () => {
         const mockRedis = {
           get: vi.fn().mockResolvedValue(JSON.stringify({
-            secret: 'MFASECRET123', authEpoch: 1, mfaEpoch: 1,
+            secret: 'MFASECRET123', authEpoch: 1, mfaEpoch: 1, sid: 'family-123', role: 'initial',
             recoveryCodes: ['CODE-0001', 'CODE-0002']
           })),
           setex: vi.fn(),
@@ -3926,7 +3962,7 @@ describe('auth routes', () => {
 
       function mockPendingSetup() {
         const mockRedis = {
-          get: vi.fn().mockResolvedValue(JSON.stringify({ secret: 'MFASECRET123', authEpoch: 1, mfaEpoch: 1 })),
+          get: vi.fn().mockResolvedValue(JSON.stringify({ secret: 'MFASECRET123', authEpoch: 1, mfaEpoch: 1, sid: 'family-123', role: 'initial' })),
           setex: vi.fn(),
           del: vi.fn().mockResolvedValue(1),
         };
@@ -5712,6 +5748,35 @@ describe('auth routes', () => {
 			expect(mintStepUpGrant).not.toHaveBeenCalled();
 		});
 
+		// #10650: a user who lost their passkey signs in with the backup
+		// authenticator and must be able to prove it here to delete the lost
+		// passkey, add a new one, or rotate recovery codes.
+		it('mints a grant for a valid code from the backup authenticator beside a primary passkey', async () => {
+			vi.mocked(consumeMFAToken).mockResolvedValueOnce(true);
+			vi.mocked(mintStepUpGrant).mockResolvedValueOnce('grant-backup-totp');
+			vi.mocked(db.select).mockReturnValue({
+				from: vi.fn().mockReturnValue({
+					where: vi.fn().mockReturnValue({
+						limit: vi.fn().mockResolvedValue([{
+							mfaEnabled: true,
+							mfaMethod: 'passkey',
+							mfaSecret: encryptMfaSecret('BACKUPSECRET'),
+						}]),
+					}),
+				}),
+			} as any);
+
+			const res = await app.request('/auth/mfa/step-up', {
+				method: 'POST',
+				headers: { Authorization: 'Bearer valid-token', 'Content-Type': 'application/json' },
+				body: JSON.stringify({ method: 'totp', code: '123456', operation: 'add_factor' }),
+			});
+
+			expect(res.status).toBe(200);
+			expect(await res.json()).toEqual({ stepUpGrantId: 'grant-backup-totp' });
+			expect(consumeMFAToken).toHaveBeenCalledWith('BACKUPSECRET', '123456', 'user-123');
+		});
+
 		it('rejects a lingering TOTP secret when TOTP is not the active factor', async () => {
 			vi.mocked(consumeMFAToken).mockResolvedValue(true);
 			vi.mocked(mintStepUpGrant).mockResolvedValue('grant-stale-totp');
@@ -5861,7 +5926,7 @@ describe('auth routes', () => {
   describe('#4470: a rejected MFA proof answers 400 + a stable code, never 401', () => {
     function pendingSetupUser(overrides: Record<string, unknown> = {}) {
       const mockRedis = {
-        get: vi.fn().mockResolvedValue(JSON.stringify({ secret: 'MFASECRET123', authEpoch: 1, mfaEpoch: 1 })),
+        get: vi.fn().mockResolvedValue(JSON.stringify({ secret: 'MFASECRET123', authEpoch: 1, mfaEpoch: 1, sid: 'family-123', role: 'initial' })),
         setex: vi.fn(),
         del: vi.fn().mockResolvedValue(1),
       };

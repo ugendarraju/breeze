@@ -43,11 +43,15 @@ import {
   buildCertificateContent,
   certificateText,
   loadCertifiedAgreementInput,
+  MAX_CERTIFIED_PNG_PIXELS,
+  MAX_CERTIFIED_PNG_SIDE,
   renderCertifiedAgreementPdf,
   type CertifiedAgreementInput,
 } from './agreementCertificate';
 import { computeAgreementSha256 } from './agreementContentHash';
 import { MAX_MERGED_PAGES, PdfMergeError } from './pdfMerge';
+import { ordinaryPng, pngInflatingTo } from './__fixtures__/pngImageData';
+import { pdfWithExpandingStreams } from './__fixtures__/expandingPdf';
 
 const DOC_ID = '22222222-2222-4222-8222-222222222222';
 const REQUEST_ID = '11111111-1111-4111-8111-111111111111';
@@ -94,8 +98,9 @@ function makeInput(pdfData: Buffer, mime: string, over: Partial<CertifiedAgreeme
     agreement: { name: 'Business Associate Agreement', templateName: 'Business Associate Agreement', versionNumber: 3 },
     parties: { seller: 'Acme MSP', client: 'Example Clinic LLC' },
     source: { kind: 'request', requestId: REQUEST_ID },
-    how: { kind: 'customer', channel: 'emailed_link', method: 'typed-signature' },
+    how: { kind: 'customer', channel: 'signing_link', method: 'typed-signature' },
     pageSize: 'letter',
+    certificateVersion: 2,
     ...rest,
   };
 }
@@ -245,10 +250,235 @@ describe('renderCertifiedAgreementPdf — merge failures are PdfMergeError', () 
     }
   });
 
+  describe('PNG originals are size-checked before decoding', () => {
+    const crcTable = Array.from({ length: 256 }, (_, n) => {
+      let c = n;
+      for (let k = 0; k < 8; k += 1) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+      return c >>> 0;
+    });
+    const crc32 = (bytes: Buffer) => {
+      let c = 0xffffffff;
+      for (const b of bytes) c = crcTable[(c ^ b) & 0xff]! ^ (c >>> 8);
+      return (c ^ 0xffffffff) >>> 0;
+    };
+    const chunk = (type: string, data: Buffer) => {
+      const body = Buffer.concat([Buffer.from(type, 'latin1'), data]);
+      const length = Buffer.alloc(4);
+      length.writeUInt32BE(data.length);
+      const crc = Buffer.alloc(4);
+      crc.writeUInt32BE(crc32(body));
+      return Buffer.concat([length, body, crc]);
+    };
+    type Header = { depth?: number; colorType?: number; interlace?: number };
+    function ihdrData(width: number, height: number, { depth = 8, colorType = 6, interlace = 0 }: Header = {}): Buffer {
+      const data = Buffer.alloc(13);
+      data.writeUInt32BE(width, 0);
+      data.writeUInt32BE(height, 4);
+      data[8] = depth;
+      data[9] = colorType;
+      data[12] = interlace;
+      return data;
+    }
+    function ihdr(width: number, height: number, header: Header = {}): Buffer {
+      return chunk('IHDR', ihdrData(width, height, header));
+    }
+    const SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    function png(width: number, height: number, extra: Buffer[] = [], afterData: Buffer[] = [], header: Header = {}): Buffer {
+      return pngWithHeader(ihdr(width, height, header), extra, afterData);
+    }
+    function pngWithHeader(header: Buffer, extra: Buffer[] = [], afterData: Buffer[] = []): Buffer {
+      return Buffer.concat([
+        SIGNATURE,
+        header,
+        ...extra,
+        chunk('IDAT', Buffer.from([0x78, 0x9c, 0x03, 0x00, 0x00, 0x00, 0x00, 0x01])),
+        ...afterData,
+        chunk('IEND', Buffer.alloc(0)),
+      ]);
+    }
+
+    async function refusedWithoutDecoding(data: Buffer, code = 'CONTRACT_IMAGE_TOO_LARGE') {
+      const decode = vi.spyOn(PDFDocument.prototype, 'embedPng').mockRejectedValue(new Error('decoder reached'));
+      try {
+        const err = await renderCertifiedAgreementPdf(makeInput(data, 'image/png')).catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(PdfMergeError);
+        expect(err).toMatchObject({ code });
+        expect(decode).not.toHaveBeenCalled();
+      } finally {
+        decode.mockRestore();
+      }
+    }
+
+    async function reachesDecoder(data: Buffer) {
+      const decode = vi.spyOn(PDFDocument.prototype, 'embedPng').mockRejectedValue(new Error('decoder reached'));
+      try {
+        // Reaching the decoder is the point; the fake pixel data then fails it.
+        await expect(renderCertifiedAgreementPdf(makeInput(data, 'image/png'))).rejects.toBeInstanceOf(PdfMergeError);
+        expect(decode).toHaveBeenCalledTimes(1);
+      } finally {
+        decode.mockRestore();
+      }
+    }
+
+    it('refuses an image with no pixels or with a side over the per-side limit', async () => {
+      await refusedWithoutDecoding(png(0, 100), 'CONTRACT_PDF_UNREADABLE');
+      await refusedWithoutDecoding(png(100, 0), 'CONTRACT_PDF_UNREADABLE');
+      await refusedWithoutDecoding(png(MAX_CERTIFIED_PNG_SIDE + 1, 1));
+      await refusedWithoutDecoding(png(1, MAX_CERTIFIED_PNG_SIDE + 1));
+    });
+
+    it('refuses an image whose decoded rows would exceed the byte limit at its bit depth', async () => {
+      // 6,000 × 6,000 is under the pixel limit, but 16-bit RGBA is 8 bytes a pixel.
+      await refusedWithoutDecoding(png(6000, 6000, [], [], { depth: 16, colorType: 6 }));
+      await reachesDecoder(png(6000, 6000, [], [], { depth: 8, colorType: 6 }));
+    });
+
+    it('refuses a header the decoder would not read the same way', async () => {
+      const unreadable = 'CONTRACT_PDF_UNREADABLE';
+      // Colour type and bit depth combinations PNG does not define.
+      await refusedWithoutDecoding(png(10, 10, [], [], { depth: 4, colorType: 2 }), unreadable);
+      await refusedWithoutDecoding(png(10, 10, [], [], { depth: 8, colorType: 5 }), unreadable);
+      await refusedWithoutDecoding(png(10, 10, [], [], { depth: 16, colorType: 3 }), unreadable);
+      // Unknown interlace method.
+      await refusedWithoutDecoding(png(10, 10, [], [], { interlace: 2 }), unreadable);
+      // A second header, before or after the image data.
+      await refusedWithoutDecoding(png(10, 10, [ihdr(10, 10)]), unreadable);
+      await refusedWithoutDecoding(png(10, 10, [], [ihdr(10, 10)]), unreadable);
+      // The header is not the first chunk.
+      await refusedWithoutDecoding(pngWithHeader(chunk('tEXt', Buffer.from('a\0b')), [ihdr(10, 10)]), unreadable);
+      // Wrong header length, or a header whose checksum does not match.
+      await refusedWithoutDecoding(pngWithHeader(chunk('IHDR', Buffer.concat([ihdrData(10, 10), Buffer.alloc(1)]))), unreadable);
+      const badCrc = ihdr(10, 10);
+      badCrc[badCrc.length - 1]! ^= 0xff;
+      await refusedWithoutDecoding(pngWithHeader(badCrc), unreadable);
+      // Not a PNG signature at all.
+      await refusedWithoutDecoding(Buffer.concat([Buffer.from('GIF89a..'), ihdr(10, 10)]), unreadable);
+    });
+
+    it('refuses a PNG whose image data inflates past its declared size, without decoding it', async () => {
+      await refusedWithoutDecoding(pngInflatingTo({ width: 10, height: 10 }, 32 * 1024 * 1024));
+      await refusedWithoutDecoding(pngInflatingTo({ width: 10, height: 10, interlaced: true }, 32 * 1024 * 1024));
+    });
+
+    it('still embeds an ordinary PNG, interlaced or not', async () => {
+      for (const interlaced of [false, true]) {
+        const out = await renderCertifiedAgreementPdf(makeInput(ordinaryPng({ width: 300, height: 200, interlaced }), 'image/png'));
+        expect((await PDFDocument.load(out)).getPageCount()).toBe(2);
+      }
+    });
+
+    it('still decodes interlaced and palette images of ordinary size', async () => {
+      await reachesDecoder(png(2550, 3300, [], [], { interlace: 1 }));
+      await reachesDecoder(png(2550, 3300, [], [], { depth: 1, colorType: 3 }));
+      await reachesDecoder(png(2550, 3300, [], [], { depth: 16, colorType: 0 }));
+    });
+
+    it('refuses a PNG whose declared size is over the pixel limit, without decoding it', async () => {
+      await refusedWithoutDecoding(png(30_000, 30_000));
+      // One row over the pixel limit, within the side and row-byte limits.
+      await refusedWithoutDecoding(png(8001, 8000));
+      // The decoder takes the size from the last header it reads, so a later
+      // header is refused whatever size it declares.
+      await refusedWithoutDecoding(png(10, 10, [], [ihdr(30_000, 30_000)]), 'CONTRACT_PDF_UNREADABLE');
+    });
+
+    it('refuses an animated PNG without decoding its frames', async () => {
+      const actl = Buffer.alloc(8);
+      actl.writeUInt32BE(100_000, 0); // frame count
+      await refusedWithoutDecoding(png(10, 10, [chunk('acTL', actl)]));
+      // Frame chunks count wherever they sit; the decoder does not check order.
+      await refusedWithoutDecoding(png(10, 10, [], [chunk('fcTL', Buffer.alloc(26))]));
+    });
+
+    it('decodes large PNG originals one at a time across renders', async () => {
+      let running = 0;
+      let most = 0;
+      const decode = vi.spyOn(PDFDocument.prototype, 'embedPng').mockImplementation(async () => {
+        running += 1;
+        most = Math.max(most, running);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        running -= 1;
+        throw new Error('decoder reached');
+      });
+      try {
+        const large = png(4000, 4000);
+        await Promise.all([1, 2, 3].map(() => renderCertifiedAgreementPdf(makeInput(large, 'image/png')).catch(() => null)));
+        expect(decode).toHaveBeenCalledTimes(3);
+        expect(most).toBe(1);
+      } finally {
+        decode.mockRestore();
+      }
+    });
+
+    it('checks and serializes PNG bytes stored under an image/jpeg type the same way', async () => {
+      const jpegDecode = vi.spyOn(PDFDocument.prototype, 'embedJpg');
+      try {
+        await refusedWithoutDecoding(png(30_000, 30_000));
+        const err = await renderCertifiedAgreementPdf(makeInput(png(30_000, 30_000), 'image/jpeg')).catch((e: unknown) => e);
+        expect(err).toMatchObject({ name: 'PdfMergeError', code: 'CONTRACT_IMAGE_TOO_LARGE' });
+        expect(jpegDecode).not.toHaveBeenCalled();
+      } finally {
+        jpegDecode.mockRestore();
+      }
+      let running = 0;
+      let most = 0;
+      const decode = vi.spyOn(PDFDocument.prototype, 'embedJpg').mockImplementation(async () => {
+        running += 1;
+        most = Math.max(most, running);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        running -= 1;
+        throw new Error('decoder reached');
+      });
+      try {
+        const large = png(4000, 4000);
+        await Promise.all([1, 2, 3].map(() => renderCertifiedAgreementPdf(makeInput(large, 'image/jpeg')).catch(() => null)));
+        expect(decode).toHaveBeenCalledTimes(3);
+        expect(most).toBe(1);
+      } finally {
+        decode.mockRestore();
+      }
+    });
+
+    it('still embeds a PNG at a scanned-page size, up to the pixel limit', async () => {
+      await reachesDecoder(png(2550, 3300));
+      // A Letter page at 600 dpi (about 34 million pixels) and a 49-million-pixel image.
+      await reachesDecoder(png(5100, 6600));
+      await reachesDecoder(png(7000, 7000));
+      expect(MAX_CERTIFIED_PNG_PIXELS).toBe(64_000_000);
+    });
+  });
+
   it('respects MAX_MERGED_PAGES (original + certificate)', async () => {
     const huge = await makePdf(MAX_MERGED_PAGES);
     await expect(renderCertifiedAgreementPdf(makeInput(huge, 'application/pdf')))
       .rejects.toMatchObject({ name: 'PdfMergeError', code: 'CONTRACT_PDF_PAGE_LIMIT_EXCEEDED' });
+  });
+});
+
+describe('renderCertifiedAgreementPdf — how far a PDF original expands while it is read', () => {
+  it('refuses a PDF whose compressed object streams inflate past the limit', async () => {
+    // 64 MB of object-stream data, from a file of about 64 KB.
+    const pdf = pdfWithExpandingStreams([{ inflatesTo: 64 * 1024 * 1024 }]);
+    expect(pdf.length).toBeLessThan(256 * 1024);
+    const err = await renderCertifiedAgreementPdf(makeInput(pdf, 'application/pdf')).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(PdfMergeError);
+    expect(err).toMatchObject({ status: 422, code: 'CONTRACT_PDF_TOO_LARGE' });
+  });
+
+  it('still certifies an ordinary PDF that uses object streams', async () => {
+    const original = await PDFDocument.create();
+    original.addPage([612, 792]);
+    original.addPage([612, 792]);
+    const bytes = Buffer.from(await original.save({ useObjectStreams: true }));
+    expect(bytes.includes(Buffer.from('/ObjStm'))).toBe(true);
+    const out = await renderCertifiedAgreementPdf(makeInput(bytes, 'application/pdf'));
+    expect((await PDFDocument.load(out)).getPageCount()).toBe(3);
+  });
+
+  it('still certifies a PDF whose object streams stay within the limit', async () => {
+    const pdf = pdfWithExpandingStreams([{ inflatesTo: 1024 * 1024 }]);
+    const out = await renderCertifiedAgreementPdf(makeInput(pdf, 'application/pdf'));
+    expect((await PDFDocument.load(out)).getPageCount()).toBe(2);
   });
 });
 
@@ -315,8 +545,8 @@ describe('certificate content (spec §3.8 table)', () => {
 
 describe('"How" wording — one case per origin, never "signed by"', () => {
   const cases: Array<[string, CertifiedAgreementInput['how'], string[]]> = [
-    ['customer via the emailed link', { kind: 'customer', channel: 'emailed_link', method: 'typed-signature' },
-      ['Electronically accepted via emailed link: typed full legal name + consent checkbox']],
+    ['customer via the signing link', { kind: 'customer', channel: 'signing_link', method: 'typed-signature' },
+      ['Electronically accepted via signing link: typed full legal name + consent checkbox']],
     ['customer via the portal', { kind: 'customer', channel: 'portal', method: 'typed-signature' },
       ['Electronically accepted via portal: typed full legal name + consent checkbox']],
     ['recorded on behalf of the client', { kind: 'on_behalf', recordedByName: 'Sam Tech', method: 'purchase_order', reference: 'PO 4471' },
@@ -409,6 +639,61 @@ describe('legacy row without evidence', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Certificate versions (#10513): signed evidence never changes after the fact.
+// A document signed before certificate v2 keeps the v1 wording, frozen.
+// ---------------------------------------------------------------------------
+
+describe('certificate versions (#10513)', () => {
+  const linkHow = { kind: 'customer', channel: 'signing_link', method: 'typed-signature' } as const;
+
+  it('v1 (signed before #10513): the token channel keeps "via emailed link", exactly as it always printed', async () => {
+    const input = makeInput(await makePdf(1), 'application/pdf', { how: linkHow, certificateVersion: 1 });
+    const text = certificateText(buildCertificateContent(input));
+    expect(text).toContain('Electronically accepted via emailed link: typed full legal name + consent checkbox');
+    expect(text.join('\n')).not.toContain('signing link');
+    const { drawn } = await drawnStrings(() => renderCertifiedAgreementPdf(input));
+    expect(drawn).toContain('Electronically accepted via emailed link: typed full legal name + consent checkbox');
+  });
+
+  it('v2: the token channel prints the neutral "via signing link" (a copied link was never emailed)', async () => {
+    const input = makeInput(await makePdf(1), 'application/pdf', { how: linkHow, certificateVersion: 2 });
+    const text = certificateText(buildCertificateContent(input));
+    expect(text).toContain('Electronically accepted via signing link: typed full legal name + consent checkbox');
+    expect(text.join('\n')).not.toMatch(/emailed/i);
+    const { drawn } = await drawnStrings(() => renderCertifiedAgreementPdf(input));
+    expect(drawn).toContain('Electronically accepted via signing link: typed full legal name + consent checkbox');
+    expect(drawn.join('\n')).not.toMatch(/emailed/i);
+  });
+
+  it('v1 and v2 differ ONLY in the token-channel wording: portal, unknown, staff and upload certificates are identical', async () => {
+    const pdf = await makePdf(1);
+    const hows: CertifiedAgreementInput['how'][] = [
+      { kind: 'customer', channel: 'portal', method: 'typed-signature' },
+      { kind: 'customer', channel: 'unknown', method: 'typed-signature' },
+      { kind: 'on_behalf', recordedByName: 'Sam Tech', method: 'verbal', reference: 'call' },
+      { kind: 'external_upload', recordedByName: 'Sam Tech', method: 'signed_document', reference: 'wet ink' },
+      { kind: 'unavailable' },
+    ];
+    for (const how of hows) {
+      expect(buildCertificateContent(makeInput(pdf, 'application/pdf', { how, certificateVersion: 1 })), how.kind)
+        .toEqual(buildCertificateContent(makeInput(pdf, 'application/pdf', { how, certificateVersion: 2 })));
+    }
+    const v1 = certificateText(buildCertificateContent(makeInput(pdf, 'application/pdf', { how: linkHow, certificateVersion: 1 })));
+    const v2 = certificateText(buildCertificateContent(makeInput(pdf, 'application/pdf', { how: linkHow, certificateVersion: 2 })));
+    expect(v1.filter((line) => !v2.includes(line))).toEqual(['Electronically accepted via emailed link: typed full legal name + consent checkbox']);
+  });
+
+  it('a non-typed-signature method on the token channel follows the version too', async () => {
+    const how = { kind: 'customer', channel: 'signing_link', method: 'other' } as const;
+    const pdf = await makePdf(1);
+    expect(certificateText(buildCertificateContent(makeInput(pdf, 'application/pdf', { how, certificateVersion: 1 }))))
+      .toContain('Electronically accepted via emailed link — method other');
+    expect(certificateText(buildCertificateContent(makeInput(pdf, 'application/pdf', { how, certificateVersion: 2 }))))
+      .toContain('Electronically accepted via signing link — method other');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Loader: one system-scope read; classifies HOW from stored columns only.
 // ---------------------------------------------------------------------------
 
@@ -451,6 +736,7 @@ function loaderRow(over: Record<string, unknown> = {}) {
     orgName: 'Example Clinic (live name)',
     partnerName: 'Acme MSP (live name)',
     partnerPageSize: 'letter',
+    certificateVersion: 2,
     ...over,
   };
 }
@@ -462,10 +748,10 @@ describe('loadCertifiedAgreementInput', () => {
     expect(contexts.max).toBe(1);
   });
 
-  it('request-sourced customer accept through the public link → emailed link; party names from the request snapshot', async () => {
+  it('request-sourced customer accept through the public link → signing link; party names from the request snapshot', async () => {
     dbResults.push([loaderRow()]);
     const input = (await loadCertifiedAgreementInput(DOC_ID))!;
-    expect(input.how).toEqual({ kind: 'customer', channel: 'emailed_link', method: 'typed-signature' });
+    expect(input.how).toEqual({ kind: 'customer', channel: 'signing_link', method: 'typed-signature' });
     expect(input.parties).toEqual({ seller: 'Acme MSP', client: 'Example Clinic LLC' });
     expect(input.source).toEqual({ kind: 'request', requestId: REQUEST_ID });
     expect(input.agreement).toEqual({ name: 'BAA', templateName: 'BAA', versionNumber: 2 });
@@ -494,9 +780,29 @@ describe('loadCertifiedAgreementInput', () => {
     });
   });
 
-  it('request label wins over the template name for the agreement name', async () => {
+  it('#10294: the agreement is named by its template, never the staff-internal request label', async () => {
     dbResults.push([loaderRow({ requestLabel: 'BAA — 2027 renewal' })]);
-    expect((await loadCertifiedAgreementInput(DOC_ID))!.agreement.name).toBe('BAA — 2027 renewal');
+    const input = (await loadCertifiedAgreementInput(DOC_ID))!;
+    expect(input.agreement.name).toBe(input.agreement.templateName);
+    expect(JSON.stringify(buildCertificateContent(input))).not.toContain('2027 renewal');
+  });
+
+  it('#10294: a template renamed after signing does not change the certificate (the name is frozen at signing)', async () => {
+    dbResults.push([loaderRow({ templateNameSnapshot: 'BAA' })]);
+    const before = buildCertificateContent((await loadCertifiedAgreementInput(DOC_ID))!);
+    // Same document, the template since renamed.
+    dbResults.push([loaderRow({ templateNameSnapshot: 'BAA', templateName: 'BAA (renamed 2027)' })]);
+    const afterInput = (await loadCertifiedAgreementInput(DOC_ID))!;
+    expect(afterInput.agreement).toEqual({ name: 'BAA', templateName: 'BAA', versionNumber: 2 });
+    expect(buildCertificateContent(afterInput)).toEqual(before);
+    expect(JSON.stringify(buildCertificateContent(afterInput))).not.toContain('renamed');
+  });
+
+  it('a pre-snapshot row (template_name_snapshot NULL) falls back to the live template name', async () => {
+    dbResults.push([loaderRow({ templateNameSnapshot: null, templateName: 'Live BAA' })]);
+    expect((await loadCertifiedAgreementInput(DOC_ID))!.agreement.name).toBe('Live BAA');
+    dbResults.push([loaderRow({ templateNameSnapshot: '   ', templateName: 'Live BAA' })]);
+    expect((await loadCertifiedAgreementInput(DOC_ID))!.agreement.name).toBe('Live BAA');
   });
 
   it('customer accept without a public-link response → portal', async () => {
@@ -504,11 +810,11 @@ describe('loadCertifiedAgreementInput', () => {
     expect((await loadCertifiedAgreementInput(DOC_ID))!.how).toMatchObject({ kind: 'customer', channel: 'portal' });
   });
 
-  it('quote-sourced: token jti → emailed link; acceptance row without one → portal; acceptance gone → unknown', async () => {
+  it('quote-sourced: token jti → signing link; acceptance row without one → portal; acceptance gone → unknown', async () => {
     const quote = { sourceKind: 'quote', agreementRequestId: null, quoteId: 'q1', quoteNumber: 'Q-7', requestSeller: null, requestClient: null, requestPublicResponseJti: null, quoteSeller: { name: 'Acme MSP' }, quoteBillTo: 'Example Clinic LLC' };
     dbResults.push([loaderRow({ ...quote, quoteAcceptanceExists: true, quoteAcceptanceTokenJti: 'q-jti' })]);
     const viaLink = (await loadCertifiedAgreementInput(DOC_ID))!;
-    expect(viaLink.how).toMatchObject({ kind: 'customer', channel: 'emailed_link' });
+    expect(viaLink.how).toMatchObject({ kind: 'customer', channel: 'signing_link' });
     expect(viaLink.source).toEqual({ kind: 'quote', quoteNumber: 'Q-7' });
     expect(viaLink.parties).toEqual({ seller: 'Acme MSP', client: 'Example Clinic LLC' });
     dbResults.push([loaderRow({ ...quote, quoteAcceptanceExists: true, quoteAcceptanceTokenJti: null })]);
@@ -546,6 +852,49 @@ describe('loadCertifiedAgreementInput', () => {
   it('no signed_at → evidence unavailable (legacy back-fill gap)', async () => {
     dbResults.push([loaderRow({ sourceKind: 'quote', signerName: null, signedAt: null, acceptanceOrigin: null, acceptanceMethod: null })]);
     expect((await loadCertifiedAgreementInput(DOC_ID))!.how).toEqual({ kind: 'unavailable' });
+  });
+
+  describe('certificate version (#10513) — read from the document row, NULL = v1', () => {
+    const quote = { sourceKind: 'quote', agreementRequestId: null, quoteId: 'q1', quoteNumber: 'Q-7', requestSeller: null, requestClient: null, requestPublicResponseJti: null, quoteSeller: { name: 'Acme MSP' }, quoteBillTo: 'Example Clinic LLC', quoteAcceptanceExists: true, quoteAcceptanceTokenJti: 'q-jti' };
+    const howText = async (over: Record<string, unknown>) => {
+      dbResults.push([loaderRow(over)]);
+      const input = (await loadCertifiedAgreementInput(DOC_ID))!;
+      return { input, text: certificateText(buildCertificateContent(input)).join('\n') };
+    };
+
+    it('request-sourced: a row signed before #10513 (NULL) keeps "via emailed link"', async () => {
+      const { input, text } = await howText({ certificateVersion: null });
+      expect(input.certificateVersion).toBe(1);
+      expect(text).toContain('Electronically accepted via emailed link');
+      expect(text).not.toContain('signing link');
+    });
+
+    it('request-sourced: a v2 row prints "via signing link"', async () => {
+      const { input, text } = await howText({ certificateVersion: 2 });
+      expect(input.certificateVersion).toBe(2);
+      expect(text).toContain('Electronically accepted via signing link');
+      expect(text).not.toMatch(/emailed/i);
+    });
+
+    it('quote-sourced: a row signed before #10513 (NULL) keeps "via emailed link"', async () => {
+      const { input, text } = await howText({ ...quote, certificateVersion: null });
+      expect(input.certificateVersion).toBe(1);
+      expect(text).toContain('Electronically accepted via emailed link');
+    });
+
+    it('quote-sourced: a v2 row prints "via signing link"', async () => {
+      const { input, text } = await howText({ ...quote, certificateVersion: 2 });
+      expect(input.certificateVersion).toBe(2);
+      expect(text).toContain('Electronically accepted via signing link');
+      expect(text).not.toMatch(/emailed/i);
+    });
+
+    it('a version this build does not know fails loudly instead of printing another version\'s wording', async () => {
+      dbResults.push([loaderRow({ certificateVersion: 3 })]);
+      await expect(loadCertifiedAgreementInput(DOC_ID)).rejects.toThrow(/certificate version 3/i);
+      dbResults.push([loaderRow({ certificateVersion: 1 })]);
+      await expect(loadCertifiedAgreementInput(DOC_ID)).rejects.toThrow(/certificate version 1/i);
+    });
   });
 
   it('partner page size A4 / unknown → resolvePageSize', async () => {

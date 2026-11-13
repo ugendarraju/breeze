@@ -138,7 +138,7 @@ describe('AiChatSidebar in Wisp mode defers to the home (W08 Task 10)', () => {
 });
 
 describe('AiChatSidebar voice is decided by the grant (W05 #10136)', () => {
-  const enterWispMode = vi.fn(async (w: NonNullable<WispState>) => { useAiStore.setState({ wisp: w }); });
+  const enterWispMode = vi.fn(async (w: NonNullable<WispState>) => { useAiStore.setState({ wisp: w }); return true; });
   const closeSession = vi.fn(async () => { useAiStore.setState({ sessionId: null }); });
   const createSession = vi.fn(async () => {});
 
@@ -167,6 +167,15 @@ describe('AiChatSidebar voice is decided by the grant (W05 #10136)', () => {
     // No toggle anywhere: the grant decides (spec §11 decision 4).
     expect(screen.queryByTestId('wisp-toggle')).toBeNull();
     expect(screen.queryByText('Turn on Wisp')).toBeNull();
+  });
+
+  it('#11672: opening the pane hands enterWispMode the thread\'s last session, so it continues the conversation', async () => {
+    const body = threadBody('grant-pw', 'active');
+    h.threads['/wisp/thread'] = { data: { ...body.data, thread: { ...body.data.thread, lastSessionId: 'sess-from-wisp-page' } } };
+    render(<AiChatSidebar />);
+    await waitFor(() => expect(enterWispMode).toHaveBeenCalledTimes(1));
+    expect(enterWispMode.mock.calls[0][0]).toMatchObject({ grantId: 'grant-pw', lastSessionId: 'sess-from-wisp-page' });
+    expect(createSession).not.toHaveBeenCalled();
   });
 
   it('finds a grant scoped to the selected organization when there is no partner-wide one', async () => {
@@ -251,6 +260,7 @@ describe('AiChatSidebar voice is decided by the grant (W05 #10136)', () => {
     expect(enterWispMode).not.toHaveBeenCalled();
     expect(screen.queryByTestId('wisp-sidebar-meet')).toBeNull();
 
+    fireEvent.click(screen.getByTestId('ai-chat-new-menu'));
     fireEvent.click(screen.getByTestId('ai-chat-new-conversation'));
     await waitFor(() => expect(enterWispMode).toHaveBeenCalledTimes(1));
     expect(closeSession).toHaveBeenCalledTimes(1);
@@ -267,11 +277,71 @@ describe('AiChatSidebar voice is decided by the grant (W05 #10136)', () => {
     // Revoked (or paused, or expired) elsewhere: the server now answers no_active_grant.
     delete h.threads['/wisp/thread'];
 
+    fireEvent.click(screen.getByTestId('ai-chat-new-menu'));
     fireEvent.click(screen.getByTestId('ai-chat-new-conversation'));
     await waitFor(() => expect(createSession).toHaveBeenCalledTimes(1));
     expect(wispThreadCalls()).toHaveLength(2);
     expect(enterWispMode).not.toHaveBeenCalled();
     expect(await screen.findByTestId('wisp-sidebar-meet')).toHaveAttribute('href', '/wisp');
+  });
+
+  describe('a plain Breeze AI chat beside an active grant (#10289)', () => {
+    const startPlainChat = vi.fn(async () => {});
+
+    beforeEach(() => {
+      startPlainChat.mockClear();
+      useAiStore.setState({ startPlainChat });
+    });
+
+    it('with a plain session and an active grant: the "+" offers both, labelled, and the header says not Wisp', async () => {
+      h.threads['/wisp/thread'] = threadBody('grant-pw', 'active');
+      useAiStore.setState({ sessionId: 'sess-plain', hydratedSessionId: 'sess-plain' });
+      render(<AiChatSidebar />);
+      expect(await screen.findByTestId('ai-chat-mode-plain')).toHaveTextContent('Breeze AI · not Wisp');
+      fireEvent.click(screen.getByTestId('ai-chat-new-menu'));
+      expect(screen.getByTestId('ai-chat-new-conversation')).toHaveTextContent('New chat');
+      fireEvent.click(screen.getByTestId('ai-chat-new-plain'));
+      await waitFor(() => expect(startPlainChat).toHaveBeenCalledTimes(1));
+      expect(enterWispMode).not.toHaveBeenCalled();
+      expect(closeSession).not.toHaveBeenCalled();
+    });
+
+    it('under Wisp: the "+" offers both and "New chat" stays on the grant', async () => {
+      useAiStore.setState({ wisp: wisp(), sessionId: 'sess-w', hydratedSessionId: 'sess-w' });
+      render(<AiChatSidebar />);
+      expect(screen.queryByTestId('ai-chat-mode-plain')).toBeNull();
+      fireEvent.click(screen.getByTestId('ai-chat-new-menu'));
+      expect(screen.getByTestId('ai-chat-new-plain')).toHaveTextContent('New plain chat');
+      fireEvent.click(screen.getByTestId('ai-chat-new-conversation'));
+      await waitFor(() => expect(createSession).toHaveBeenCalledTimes(1));
+      expect(startPlainChat).not.toHaveBeenCalled();
+    });
+
+    it('the real startPlainChat under Wisp: the panel re-reads the grant but does not walk back into it (#10289 review)', async () => {
+      // The create is stubbed to leave no session (as a refused create does), so
+      // only the ended-grant guard keeps the lookup effect from re-entering Wisp.
+      h.threads['/wisp/thread'] = threadBody('grant-1', 'active');
+      useAiStore.setState({ startPlainChat: useAiStore.getInitialState().startPlainChat, wisp: wisp(), sessionId: 'sess-w', hydratedSessionId: 'sess-w' });
+      render(<AiChatSidebar />);
+      fireEvent.click(screen.getByTestId('ai-chat-new-menu'));
+      fireEvent.click(screen.getByTestId('ai-chat-new-plain'));
+      await waitFor(() => expect(createSession).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(wispThreadCalls()).toContain('/wisp/thread'));
+      await settle();
+      expect(closeSession).toHaveBeenCalledTimes(1);
+      expect(enterWispMode).not.toHaveBeenCalled();
+      expect(useAiStore.getState().wisp).toBeNull();
+      expect(screen.getByTestId('ai-chat-mode-plain')).toHaveTextContent('Breeze AI · not Wisp');
+    });
+
+    it('no grant: a single "+" with no plain option, and no "not Wisp" label', async () => {
+      useAiStore.setState({ sessionId: 'sess-plain', hydratedSessionId: 'sess-plain' });
+      render(<AiChatSidebar />);
+      await screen.findByTestId('wisp-sidebar-meet');
+      expect(screen.queryByTestId('ai-chat-new-menu')).toBeNull();
+      expect(screen.queryByTestId('ai-chat-new-plain')).toBeNull();
+      expect(screen.queryByTestId('ai-chat-mode-plain')).toBeNull();
+    });
   });
 
   it('New conversation without a grant is a plain new conversation', async () => {
@@ -329,7 +399,7 @@ describe('AiChatSidebar voice is decided by the grant (W05 #10136)', () => {
 });
 
 describe('AiChatSidebar speaks one voice and follows the grant live (#10195)', () => {
-  const enterWispMode = vi.fn(async (w: NonNullable<WispState>) => { useAiStore.setState({ wisp: w }); });
+  const enterWispMode = vi.fn(async (w: NonNullable<WispState>) => { useAiStore.setState({ wisp: w }); return true; });
 
   beforeEach(() => {
     fetchMock.mockClear();
@@ -345,7 +415,7 @@ describe('AiChatSidebar speaks one voice and follows the grant live (#10195)', (
 
   it('under a Wisp header the empty state and the composer are Wisp too, not the generic Breeze AI prompts', () => {
     const sendMessage = vi.fn(async () => {});
-    useAiStore.setState({ wisp: wisp(), sessionId: 'sess-w', hydratedSessionId: 'sess-w', sendMessage });
+    useAiStore.setState({ wisp: { ...wisp(), firstLookState: 'looking' }, sessionId: 'sess-w', hydratedSessionId: 'sess-w', sendMessage });
     render(<AiChatSidebar />);
     expect(kitProps.input?.placeholder).toBe('Message Wisp');
     render(<>{kitProps.messages?.emptyState as React.ReactNode}</>);
@@ -357,10 +427,21 @@ describe('AiChatSidebar speaks one voice and follows the grant live (#10195)', (
 
   it('an org-scoped Wisp session greets with the organization name', () => {
     useOrgStore.setState({ organizations: [{ id: 'org-a', name: 'Acme' }] } as never);
-    useAiStore.setState({ wisp: { ...wisp(), scopeOrgId: 'org-a' }, sessionId: 'sess-w', hydratedSessionId: 'sess-w' });
+    useAiStore.setState({ wisp: { ...wisp(), scopeOrgId: 'org-a', firstLookState: 'looking' }, sessionId: 'sess-w', hydratedSessionId: 'sess-w' });
     render(<AiChatSidebar />);
     render(<>{kitProps.messages?.emptyState as React.ReactNode}</>);
     expect(screen.getByTestId('wisp-welcome')).toHaveTextContent("I'm looking around Acme.");
+  });
+
+  it.each([
+    ['couldnt_look', "I couldn't look at All organizations yet."],
+    ['done', "I've had a first look at All organizations."],
+  ] as const)('#11145: a %s grant does not say "looking around" in the panel', (firstLookState, text) => {
+    useAiStore.setState({ wisp: { ...wisp(), firstLookState }, sessionId: 'sess-w', hydratedSessionId: 'sess-w' });
+    render(<AiChatSidebar />);
+    render(<>{kitProps.messages?.emptyState as React.ReactNode}</>);
+    expect(screen.getByTestId('wisp-welcome')).toHaveTextContent(text);
+    expect(screen.getByTestId('wisp-welcome')).not.toHaveTextContent('looking around');
   });
 
   it('a plain chat keeps the Breeze AI empty state and placeholder', () => {

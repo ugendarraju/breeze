@@ -51,7 +51,8 @@ import {
   getRedis,
   verifyPassword,
   hashPassword,
-  isAccountLocked,
+  reserveAccountAttempt,
+  releaseAccountAttempt,
   clearAccountFailures,
   type UserSessionIdentity,
 } from '../services';
@@ -82,9 +83,10 @@ import {
   userRequiresSetup,
   userIsMfaProtected,
   installAuthorizedUserSessionCookies,
+  hasActiveTotpFactor,
   type PendingMfaRecord,
 } from './auth/helpers';
-import { recordAccountFailureAndMaybeNotify } from './auth/login';
+import { notifyAccountLocked } from './auth/login';
 import { ENABLE_2FA } from './auth/schemas';
 import { completeSsoLogin, finalizeSsoPendingLink, normalizeRedirectPath } from './auth/ssoLinkCompletion';
 import {
@@ -4210,14 +4212,15 @@ ssoRoutes.post('/link/confirm', zValidator('json', ssoLinkConfirmSchema), async 
 
   const normalizedEmail = user.email.toLowerCase();
 
-  // SR2-23 discipline (mirrors /auth/login): the lockout read never
-  // short-circuits the argon2 verify, and a locked account is denied with
-  // the same generic 401 even on a correct password — without re-bumping
-  // the counter (that would let an attacker hold the lockout open).
-  const accountLocked = await isAccountLocked(redis, normalizedEmail);
+  // Same discipline as /auth/login: the attempt is reserved on the
+  // account before the password is checked (concurrent guesses each take
+  // their own slot), the reservation never short-circuits the argon2 verify,
+  // and a locked account is denied with the same generic 401 even on a correct
+  // password. Attempts while locked never move the window's expiry.
+  const reservation = await reserveAccountAttempt(redis, normalizedEmail);
   const validPassword = await verifyPassword(user.passwordHash, password);
 
-  if (accountLocked) {
+  if (!reservation.allowed) {
     void auditUserLoginFailure(c, {
       userId: user.id,
       email: user.email,
@@ -4231,7 +4234,7 @@ ssoRoutes.post('/link/confirm', zValidator('json', ssoLinkConfirmSchema), async 
   }
 
   if (!validPassword) {
-    void recordAccountFailureAndMaybeNotify(c, user, normalizedEmail);
+    if (reservation.reachesLimit) void notifyAccountLocked(c, user, reservation.count);
     void auditUserLoginFailure(c, {
       userId: user.id,
       email: user.email,
@@ -4242,6 +4245,10 @@ ssoRoutes.post('/link/confirm', zValidator('json', ssoLinkConfirmSchema), async 
     await floorPromise;
     return c.json(genericAuthError(), 401);
   }
+
+  // Correct password: give the reserved attempt back so the counter keeps
+  // measuring failed passwords only.
+  void releaseAccountAttempt(redis, normalizedEmail);
 
   // Cheap stale-state guards before any continuation (the finalizer re-checks
   // everything again atomically after consuming the record).
@@ -4289,7 +4296,7 @@ ssoRoutes.post('/link/confirm', zValidator('json', ssoLinkConfirmSchema), async 
   // mfa:pending continuation so all factor types (TOTP/SMS/recovery/passkey)
   // work; the completion endpoints see ssoLinkTokenHash and finalize the
   // link instead of the password-login mint.
-  if (ENABLE_2FA && user.mfaEnabled && (user.mfaSecret || user.mfaMethod === 'sms' || user.mfaMethod === 'passkey')) {
+  if (ENABLE_2FA && user.mfaEnabled && (hasActiveTotpFactor(user) || user.mfaMethod === 'sms' || user.mfaMethod === 'passkey')) {
     const tempToken = nanoid(32);
     const mfaMethod = user.mfaMethod || 'totp';
     const passkeyAvailable = await userHasUsablePasskey(user.id);
@@ -4306,7 +4313,7 @@ ssoRoutes.post('/link/confirm', zValidator('json', ssoLinkConfirmSchema), async 
       partnerId: record.providerPartnerId,
     });
     const allowedMethods = {
-      totp: Boolean(user.mfaSecret) && pendingPolicy.allowedMethods.totp,
+      totp: hasActiveTotpFactor(user) && pendingPolicy.allowedMethods.totp,
       sms: user.mfaMethod === 'sms' && Boolean(user.phoneNumber) && pendingPolicy.allowedMethods.sms,
       passkey: passkeyAvailable && pendingPolicy.allowedMethods.passkey,
     };

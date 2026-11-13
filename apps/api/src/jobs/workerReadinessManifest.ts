@@ -22,6 +22,7 @@ export type WorkerInitializerClassification =
   | {
       kind: 'non_consumer';
       initializer:
+        | 'psaTicketingReconciler'
         | 'desktopSessionOrphanRecovery'
         | 'oauthRevocationRetryWorker'
         | 'topologyOutboxWorker'
@@ -50,6 +51,8 @@ const consumers = (
 });
 
 export const WORKER_READINESS_MANIFEST: readonly WorkerInitializerClassification[] = [
+  consumers('psaTicketingWorker'),
+  { kind: 'non_consumer', initializer: 'psaTicketingReconciler' },
   consumers('alertWorkers', ['alertWorker']),
   consumers('monitorConversionPreviewWorker'),
   consumers('alertCorrelationWorker'),
@@ -60,6 +63,7 @@ export const WORKER_READINESS_MANIFEST: readonly WorkerInitializerClassification
   consumers('fleetRemediationDispatchWorker'),
   consumers('mlOutputRetention'),
   consumers('aiToolOutputRetention'),
+  consumers('aiTranscriptRetention'),
   consumers('aiTranscriptSweeper'),
   consumers('offlineDetector'),
   consumers('notificationDispatcher'),
@@ -106,6 +110,8 @@ export const WORKER_READINESS_MANIFEST: readonly WorkerInitializerClassification
   consumers('filesystemCleanupRunRetention'),
   // #8581. Plain Redis-required consumer, no feature flag.
   consumers('restorePointAttemptRetention'),
+  consumers('wakeAttemptSweep'),
+  consumers('wakeAttemptRetention'),
   // #9128. Plain Redis-required consumer, no feature flag.
   consumers('webhookDeliveryRetention'),
   // #10019/#10020. Plain Redis-required consumer, no feature flag.
@@ -119,6 +125,7 @@ export const WORKER_READINESS_MANIFEST: readonly WorkerInitializerClassification
   consumers('quoteSendWorker'),
   consumers('enrollmentKeyCleanup'),
   consumers('migrationWindowSweep'),
+  consumers('ticketImportWorker'),
   consumers('partnerApiIdempotencyRetention'),
   consumers('quickSupportReaper'),
   consumers('wispGrantReconciler'),
@@ -177,6 +184,7 @@ export const WORKER_READINESS_MANIFEST: readonly WorkerInitializerClassification
   consumers('patchJobWorker', ['patchJobWorker', 'patchJobDeviceWorker']),
   consumers('patchSchedulerWorker'),
   consumers('maintenanceRebootWorker'),
+  consumers('oemUpdatesWorker'),
   consumers('backupWorker'),
   consumers('backupSnapshotFileIndexWorker'),
   consumers('backupSnapshotAttestationWorker'),
@@ -191,6 +199,7 @@ export const WORKER_READINESS_MANIFEST: readonly WorkerInitializerClassification
   consumers('recoveryMediaWorker'),
   consumers('warrantyWorker'),
   consumers('ssoDomainRecheckWorker'),
+  consumers('portalDomainRecheckWorker'),
   { kind: 'non_consumer', initializer: 'incidentCorrelationWorker' },
   { kind: 'non_consumer', initializer: 'incidentTimelineEnricher' },
   { kind: 'non_consumer', initializer: 'incidentSlaMonitor' },
@@ -198,6 +207,7 @@ export const WORKER_READINESS_MANIFEST: readonly WorkerInitializerClassification
   consumers('softwareDeploymentScheduler'),
   consumers('pamJobs', ['pamExpiryEnforcerWorker', 'pamStaleRequestWorker']),
   consumers('approvalExpiryReaper'),
+  consumers('networkIsolationSweeper'),
   consumers('workspaceReaper'),
   consumers('offboardingDrainReaper'),
   consumers('intentOutboxPublisher'),
@@ -213,6 +223,8 @@ export const WORKER_READINESS_MANIFEST: readonly WorkerInitializerClassification
   consumers('stripeSessionRevocationSweep'),
   consumers('quoteExpiryReaper'),
   consumers('agreementRequestExpiryReaper'),
+  // Portal registration W3: daily portal identity drift report (report only).
+  consumers('portalIdentityReconcile'),
   // #9075 W4a: automatic agreement-request reminders.
   consumers('agreementRequestAutoReminder'),
   consumers('suppressionExpiryReaper'),
@@ -302,9 +314,14 @@ export const WORKER_READINESS_MANIFEST: readonly WorkerInitializerClassification
   consumers('ticketOutboxRetention'),
   consumers('intentOutboxRetention'),
   consumers('metricAnomalyIncidentRetention'),
+  // #4342 W5. Plain Redis-required consumer, no feature flag.
+  consumers('historyRetention'),
   // Wisp W05b (#9917): daily concern retention — same shape (one Worker, no
   // flag gate before construction, attached under its registry-key name).
   consumers('wispConcernRetention'),
+  // #11430: 15-minute chat session expiry sweep — one Worker, no flag gate,
+  // constructed and attached unconditionally under its registry-key name.
+  consumers('aiChatSessionExpirySweep'),
   // Wisp W06a (#9912): 15-minute nudge digest + morning brief — same shape
   // (one Worker constructed and attached unconditionally; flag read per run).
   consumers('wispNudgeDigest'),
@@ -315,11 +332,14 @@ export const WORKER_READINESS_MANIFEST: readonly WorkerInitializerClassification
   consumers('monitorEpisodeRetention'),
   // #8164 W02 — one Worker, unconditional, attached under its registry name.
   consumers('edrDetectionRetentionWorker'),
+  // #4342 W3. Plain Redis-required consumer, no feature flag.
+  consumers('alertRetention'),
   // #4248 W03 — one Worker, unconditional, attached under its registry name.
   consumers('reportRunDeliveryReconciler'),
   consumers('accountingReconcileWorker'),
-  // Merge-forward (origin/main 2026-09-06): three more `socket-owner` registry
-  // entries, each read rather than inferred. None is feature-flag gated and
+  // Merge-forward (origin/main 2026-09-06): three more registry entries
+  // (`socket-owner` when added; deviceGroupJobs is `global` now), each read
+  // rather than inferred. None is feature-flag gated and
   // each constructs exactly one Worker unconditionally, so all three are
   // plain-required (`redis`). removedDevicePurge already attached under its
   // registry key on main; deviceGroupJobs attaches as
@@ -362,6 +382,8 @@ export const WORKER_READINESS_MANIFEST: readonly WorkerInitializerClassification
   consumers('flowRunner'),
   consumers('flowRunReconciler'),
   consumers('flowRunRetention'),
+  // #4342 W2. Plain Redis-required consumer, no feature flag.
+  consumers('scriptExecutionRetention'),
   // Task A9 — the schedule trigger tick (FLOWS_ENABLED gates the tick body).
   consumers('flowScheduleTick'),
   // Partner sending domains W03. initializeSendingDomainsWorker returns before
@@ -372,6 +394,15 @@ export const WORKER_READINESS_MANIFEST: readonly WorkerInitializerClassification
   // AI Suggested Fixes W1 — attachWorkerObservability name == registry name.
   consumers('fixOutcomeWorker'),
   consumers('sendingDomainsWorker', ['sendingDomainsWorker'], 'sending_domains_configured'),
+  // Portal registration W6 (#11383): one Worker, constructed unconditionally
+  // (the kill switch gates the public route, not the consumer), attached under
+  // its registry name.
+  consumers('portalSelfRegistrationWorker'),
+  // #4342 W1. Plain Redis-required consumers, no feature flag.
+  consumers('deviceCommandRetention'),
+  consumers('filesystemSnapshotRetention'),
+  consumers('networkMonitorResultRetention'),
+  consumers('deviceSessionRetention'),
 ] as const;
 
 export function consumersForInitializer(initializer: string): readonly string[] {

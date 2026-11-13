@@ -273,6 +273,8 @@ const listChatSurfaceToolNames = vi.hoisted(() => vi.fn<() => string[]>());
 vi.mock('../aiAgentSdkTools', () => ({
   createBreezeMcpServer,
   listChatSurfaceToolNames,
+  // #11395: read only under a constrained tool profile (a `custom` allow-list's domains).
+  chatToolDomain: () => undefined,
   BREEZE_MCP_TOOL_NAMES: ['mcp__breeze__query_devices'],
   // Mirrors BREEZE_MCP_TOOL_NAMES above (one tool, bare name) — runLoop.ts's
   // full-profile exposure (WQ3, #6755) derives from Object.keys(TOOL_TIERS)
@@ -602,7 +604,8 @@ function seedRows(options: {
 const hooks: Hooks = {};
 
 interface QueryScript {
-  toolCalls?: Array<{ tool: string; input: Record<string, unknown> }>;
+  /** `result`: what an ALLOWED call's tool returned (default `{"ok":true}`, not an error). */
+  toolCalls?: Array<{ tool: string; input: Record<string, unknown>; result?: { output: string; isError: boolean } }>;
   assistantText?: string;
   results?: Array<Record<string, unknown>>;
   hangUntilAbort?: boolean;
@@ -671,7 +674,7 @@ function scriptQuery(script: QueryScript) {
         const verdict = await hooks.pre!(call.tool, call.input);
         preVerdicts.push(verdict);
         if (verdict.allowed) {
-          await hooks.post!(call.tool, call.input, '{"ok":true}', false, 5);
+          await hooks.post!(call.tool, call.input, call.result?.output ?? '{"ok":true}', call.result?.isError ?? false, 5);
         } else {
           await hooks.post!(call.tool, call.input, JSON.stringify({ error: verdict.error }), true, 0);
         }
@@ -941,6 +944,34 @@ describe('executeAgentRun', () => {
     expect(lastQueryOptions!.env).toEqual({ HTTPS_PROXY: 'http://127.0.0.1:9999' });
     // The grant never outlives the run.
     expect(revoke).toHaveBeenCalledTimes(1);
+  });
+
+  it('#11395: a gateway run under a constrained tool profile asks prepareSdkChild for compacted schemas', async () => {
+    seedRows();
+    const gateway = makeResolvedModel('openai_compatible', {
+      surface: 'ai_agents',
+      toolProfileFacts: { toolProfile: 'minimal', toolAllowlist: null, effectiveWindow: null, transport: 'gateway' },
+    });
+    resolveModel.mockResolvedValue(gateway);
+    await executeAgentRun(RUN_ID);
+    expect(prepareSdkChild).toHaveBeenCalledWith(gateway, {
+      key: `agent-run:${RUN_ID}`, orgId: ORG_ID, aiSessionId: 'session-1', compactSchemas: true,
+    });
+    // The server advertises under the same exposure (compact descriptions; no session to read it from).
+    expect(createBreezeMcpServer.mock.calls[0]?.[5]).toMatchObject({ toolExposure: { profile: 'minimal', promptMode: 'constrained' } });
+    // And the ledger records it.
+    expect(settleInvocation).toHaveBeenCalledWith(expect.objectContaining({
+      agentRunId: RUN_ID, toolExposure: { profile: 'minimal', fingerprint: expect.stringMatching(/^[0-9a-f]{16}$/) },
+    }));
+  });
+
+  it('#11395: the identity tool profile passes no toolExposure to the server (registration unchanged)', async () => {
+    seedRows();
+    await executeAgentRun(RUN_ID);
+    expect(createBreezeMcpServer.mock.calls[0]?.[5] ?? {}).not.toHaveProperty('toolExposure');
+    expect(settleInvocation).toHaveBeenCalledWith(expect.objectContaining({
+      agentRunId: RUN_ID, toolExposure: { profile: 'full', fingerprint: 'full' },
+    }));
   });
 
   it('a non-catalog run takes its child env from prepareSdkChild for the resolved connection', async () => {
@@ -3011,6 +3042,38 @@ describe('executeAgentRun', () => {
     })]);
   });
 
+  it('#10413: bills every modelUsage key of the fresh hop query (the CLI background call included), confirmed', async () => {
+    seedRows();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const BG = 'claude-haiku-4-5-20251001';
+    const main = { input_tokens: 10, output_tokens: 20, cache_read_input_tokens: 90_000, cache_creation_input_tokens: 5_000 };
+    const base = resultMessage({ num_turns: 5, usage: main });
+    scriptQuery({
+      assistantText: 'done',
+      results: [{
+        ...base,
+        modelUsage: {
+          ...(base.modelUsage as Record<string, unknown>),
+          [BG]: { inputTokens: 900, outputTokens: 15, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, webSearchRequests: 0, costUSD: 0 },
+        },
+      }],
+    });
+
+    await executeAgentRun(RUN_ID);
+
+    expect(settleInvocation).toHaveBeenCalledTimes(1);
+    const input = settleInvocation.mock.calls[0]![0] as { usage: unknown; outcome: unknown };
+    expect(input.usage).toEqual([
+      expect.objectContaining({ model: AGENT_WIRE_MODEL, tokens: { input: 10, output: 20, cacheRead: 90_000, cacheWrite: 5_000 } }),
+      expect.objectContaining({ model: BG, tokens: { input: 900, output: 15, cacheRead: 0, cacheWrite: 0 } }),
+    ]);
+    expect(input.outcome).toMatchObject({ servedModel: AGENT_WIRE_MODEL, fallbackUsed: false });
+    expect(warn.mock.calls.some((c) => String(c[0]).includes('ai_usage_unconfirmed'))).toBe(false);
+    // The premise of billing from zero: the hop query neither resumes nor persists a transcript.
+    expect(lastQueryOptions).toMatchObject({ persistSession: false });
+    expect(lastQueryOptions).not.toHaveProperty('resume');
+  });
+
   it('a run that ended with no result marks its reservation indeterminate instead of settling', async () => {
     seedRows();
     queryMock.mockImplementation((params: { prompt: unknown; options: Record<string, unknown> }) => {
@@ -3133,6 +3196,28 @@ describe('executeAgentRun', () => {
     const final = finalTransition()!;
     const outcome = final.patch.outcome as { executedActions: Array<{ executionId: string }> };
     expect(outcome.executedActions[0]!.executionId).toBe('exec-1');
+  });
+
+  // #10411: a failed run tool call kept only status 'failed' — the reason
+  // survived only in the model's prose.
+  it('a failed allowed tool call hands its result to the ledger row for the error text', async () => {
+    seedRows();
+    scriptQuery({
+      toolCalls: [{
+        tool: 'query_devices',
+        input: { status: 'online' },
+        result: { output: JSON.stringify({ error: 'Device is offline' }), isError: true },
+      }],
+      assistantText: 'done',
+    });
+
+    await executeAgentRun(RUN_ID);
+
+    expect(completeToolExecution).toHaveBeenCalledWith(expect.objectContaining({
+      executionId: 'exec-1',
+      isError: true,
+      output: JSON.stringify({ error: 'Device is offline' }),
+    }));
   });
 
   it('a ledger write failure never blocks the tool call — falls back to (inline)', async () => {

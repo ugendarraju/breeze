@@ -8,7 +8,16 @@ import { isSelfManagedDbContextRoute } from './selfManagedDbContextRoutes';
 // fails to match re-pins a pooled connection across the network call.
 describe('isSelfManagedDbContextRoute', () => {
   const MATCH: ReadonlyArray<[string, string]> = [
+    ['POST', '/api/v1/devices/bulk/commands'],
+    ['POST', '/api/v1/devices/bulk/commands/'],
+    ['POST', '/api/v1/devices/abc-123/commands'],
+    ['POST', '/api/v1/devices/abc-123/commands/'],
     ['POST', '/api/v1/devices/abc-123/filesystem/cleanup-execute'],
+    // Ticket import sources and runs (#8313 W4): outbound connect / commit-then-enqueue.
+    ['POST', '/api/v1/ticket-imports/sources'],
+    ['PATCH', '/api/v1/ticket-imports/sources/abc-123'],
+    ['POST', '/api/v1/ticket-imports/sources/abc-123/preflight'],
+    ['POST', '/api/v1/ticket-imports/sources/abc-123/runs'],
     ['POST', '/api/v1/devices/abc-123/filesystem/cleanup-execute/'],
     ['post', '/api/v1/devices/abc-123/filesystem/cleanup-execute'],
     ['POST', '/api/v1/invoices/abc-123/pay-link'],
@@ -267,6 +276,11 @@ describe('isSelfManagedDbContextRoute', () => {
   ];
 
   const NO_MATCH: ReadonlyArray<[string, string, string]> = [
+    ['GET', '/api/v1/ticket-imports/sources', 'the list keeps the ambient tx'],
+    ['PUT', '/api/v1/ticket-imports/sources/abc-123/mappings', 'mappings call no source and keep the ambient tx'],
+    ['POST', '/api/v1/ticket-imports/sources/abc-123/revoke', 'revoke calls no source'],
+    ['DELETE', '/api/v1/ticket-imports/sources/abc-123', 'delete calls no source'],
+    ['POST', '/api/v1/ticket-imports/runs/abc-123/cancel', 'cancel enqueues nothing'],
     ['GET', '/api/v1/configuration-policies/policy-1/patch-job', 'wrong method (only POST opts out)'],
     ['POST', '/api/v1/configuration-policies/policy-1/patch-settings', 'sibling route keeps the ambient tx'],
     ['GET', '/api/v1/backup/jobs/run-all/preview', 'read-only preview keeps the ambient tx'],
@@ -553,6 +567,18 @@ it('self-manages the Graph binding POST but not ordinary verification writes', (
 // #7103 — manual Run Script creates its rows in a short committed context and
 // sends only after that commit, so it cannot run inside the request tx. Only the
 // execute POST opts out; the script's other routes keep the ambient tx.
+// #11065 W04: Run vendor updates. The seam commits its own row and then pushes,
+// so the POST holds no request transaction; the status and history reads do.
+it('self-manages POST /devices/:id/oem-updates/run and no sibling route', () => {
+  const base = '/api/v1/devices/22222222-2222-4222-8222-222222222222/oem-updates';
+  expect(isSelfManagedDbContextRoute('POST', `${base}/run`)).toBe(true);
+  expect(isSelfManagedDbContextRoute('POST', `${base}/run/`)).toBe(true);
+  expect(isSelfManagedDbContextRoute('GET', `${base}/run`)).toBe(false);
+  expect(isSelfManagedDbContextRoute('GET', `${base}/status`)).toBe(false);
+  expect(isSelfManagedDbContextRoute('GET', `${base}/history`)).toBe(false);
+  expect(isSelfManagedDbContextRoute('POST', '/api/v1/devices/not-a-uuid/oem-updates/run')).toBe(false);
+});
+
 it('self-manages POST /scripts/:id/execute and no sibling script route', () => {
   expect(isSelfManagedDbContextRoute('POST', '/api/v1/scripts/abc-123/execute')).toBe(true);
   expect(isSelfManagedDbContextRoute('POST', '/api/v1/scripts/abc-123/execute/')).toBe(true);
@@ -827,6 +853,44 @@ describe('#10190 helper config', () => {
     ['GET', '/api/v1/helper/device-info', 'sibling read keeps the ambient tx'],
     ['GET', '/api/v1/helper/configx', 'prefix must not match'],
   ])('keeps ambient tx: %s %s (%s)', (method, path) => {
+    expect(isSelfManagedDbContextRoute(method, path)).toBe(false);
+  });
+});
+
+describe('routes that wait on another host self-manage their DB context', () => {
+  const ID = '3f2c1b9e-8a7d-4e6f-9c5b-1a2b3c4d5e6f';
+  it.each([
+    ['POST', '/api/v1/integrations/monitoring/test'],
+    ['POST', '/api/v1/integrations/monitoring/test/'],
+    ['POST', '/api/v1/google/connection'],
+    ['POST', '/api/v1/unifi/connect'],
+    ['POST', '/api/v1/unifi/test'],
+    ['GET', '/api/v1/unifi/hosts'],
+    ['POST', '/api/v1/pax8/integration/test'],
+    ['POST', `/api/v1/catalog/${ID}/image/from-url`],
+    ['POST', `/api/v1/remote/support-sessions/${ID}/end`],
+    ['POST', '/api/v1/billing/portal'],
+    ['POST', '/api/v1/support'],
+    ['POST', `/api/v1/quotes/${ID}/images`],
+    ['POST', `/api/v1/orgs/organizations/${ID}/customer-domains/${ID}/verification/check`],
+  ])('self-manages %s %s', (method, path) => {
+    expect(isSelfManagedDbContextRoute(method, path)).toBe(true);
+  });
+
+  it.each([
+    ['GET', '/api/v1/integrations/monitoring'],
+    ['POST', '/api/v1/integrations/monitoring'],
+    ['GET', '/api/v1/google/connection'],
+    ['DELETE', '/api/v1/google/connection'],
+    ['POST', '/api/v1/unifi/disconnect'],
+    ['POST', `/api/v1/catalog/${ID}/image`],
+    ['GET', `/api/v1/catalog/${ID}/image`],
+    ['GET', `/api/v1/remote/support-sessions/${ID}`],
+    ['POST', '/api/v1/remote/support-sessions'],
+    ['GET', '/api/v1/support/download/windows'],
+    ['GET', `/api/v1/quotes/${ID}/images/${ID}`],
+    ['POST', `/api/v1/orgs/organizations/${ID}/customer-domains/${ID}/verification/dns`],
+  ])('keeps the ambient transaction for %s %s', (method, path) => {
     expect(isSelfManagedDbContextRoute(method, path)).toBe(false);
   });
 });

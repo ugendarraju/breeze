@@ -18,12 +18,21 @@ type pendingResponse struct {
 	ch           chan *ipc.Envelope
 	expectedType string
 	validate     func(*ipc.Envelope) error
+	// discard marks a tombstone left by sendCommandAbandoningLateReply: the
+	// sender stopped waiting at abandonedAt, so HandleResponse consumes a
+	// late reply (keeping it from being forwarded as unsolicited) and drops
+	// the entry. A tombstone has no ch.
+	discard     bool
+	abandonedAt time.Time
 }
 
 // Session represents a connected user helper with verified identity.
 type Session struct {
-	UID           uint32 // Numeric UID (0 on Windows; kept for logging/compat)
-	IdentityKey   string // Platform identity: UID string on Unix, SID on Windows
+	UID         uint32 // Numeric UID (0 on Windows; kept for logging/compat)
+	IdentityKey string // Platform identity: UID string on Unix, SID on Windows
+	// Username is the name of the account the helper's verified identity
+	// belongs to, resolved by the broker (see account_identity.go); "" when
+	// it could not be resolved.
 	Username      string
 	DisplayEnv    string
 	SessionID     string
@@ -47,8 +56,12 @@ type Session struct {
 	// can dismiss one specific consent.exe (ipc.PamDismissConsentRequest.Instance).
 	// Set once at auth by targetedPamDismissFromAuth, never changed afterwards.
 	SupportsTargetedPamDismiss bool
-	ConnectedAt                time.Time
-	LastSeen                   time.Time
+	// SupportsPamDialogClose is true when this SYSTEM helper advertised it
+	// honours pam_close_dialog (#10370). Set once at auth by
+	// pamDialogCloseFromAuth, never changed afterwards.
+	SupportsPamDialogClose bool
+	ConnectedAt            time.Time
+	LastSeen               time.Time
 
 	conn    *ipc.Conn
 	mu      sync.Mutex
@@ -63,6 +76,11 @@ type Session struct {
 
 	broker      *Broker
 	peerProcess *ownedPeerProcessRef
+
+	// accountIdentity is the kernel-verified identity of the helper's
+	// account (SID on Windows, UID elsewhere), without the per-session
+	// admission suffix IdentityKey may carry. Set once at auth.
+	accountIdentity string
 
 	// Prompt host advertisement (#10190), set once at auth by
 	// applyAuthAdvertisements and never changed afterwards: the clamped
@@ -416,6 +434,10 @@ func (s *Session) HandleResponse(env *ipc.Envelope) bool {
 			)
 			return true
 		}
+		if pending.discard {
+			s.discardLateReply(env, pending.abandonedAt)
+			return true
+		}
 		if pending.validate != nil && env.Error == "" {
 			if err := pending.validate(env); err != nil {
 				log.Warn("response payload validation failed, dropping",
@@ -427,9 +449,24 @@ func (s *Session) HandleResponse(env *ipc.Envelope) bool {
 				return true
 			}
 		}
+		// Deliver under s.mu, re-reading the registration: abandonPending may
+		// have swapped in a tombstone since the read above, and a reply sent to
+		// the abandoned channel after its last check would be lost unlogged and
+		// strand the tombstone. The send never blocks, so holding s.mu is cheap.
+		s.mu.Lock()
+		if current, still := s.pending[env.ID]; still && current.discard {
+			s.mu.Unlock()
+			s.discardLateReply(env, current.abandonedAt)
+			return true
+		}
+		dropped := false
 		select {
 		case pending.ch <- env:
 		default:
+			dropped = true
+		}
+		s.mu.Unlock()
+		if dropped {
 			log.Warn("response channel full, dropping", "id", env.ID)
 		}
 		return true
@@ -621,6 +658,8 @@ func expectedResponseType(cmdType string) string {
 		return ipc.TypePamDialogResult
 	case ipc.TypePamDismissConsent:
 		return ipc.TypePamDismissConsentResult
+	case ipc.TypePamCloseDialog:
+		return ipc.TypePamCloseDialogResult
 	case ipc.TypeClipboardGet:
 		return ipc.TypeClipboardData
 	case ipc.TypeClipboardSet:

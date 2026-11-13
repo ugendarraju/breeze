@@ -40,13 +40,18 @@ import { users } from '../db/schema/users';
 import { organizations, partners } from '../db/schema/orgs';
 import { computeAgreementSha256 } from './agreementContentHash';
 import { registerThemeFonts, resolvePageSize, type DocumentPageSize } from './documentThemes';
-import { MAX_MERGED_PAGES, PdfMergeError, mergeUploadedContractPdfs } from './pdfMerge';
+import { MAX_MERGED_PAGES, PdfMergeError, mergeUploadedContractPdfs, pdfTooLargeError } from './pdfMerge';
+import { PdfLoadLimitError, loadPdfDocument } from './pdfLoadLimits';
+import { MAX_PNG_DECODED_BYTES, MAX_PNG_DECODE_PIXELS, MAX_PNG_DECODE_SIDE, checkPngImageData, hasPngSignature, withPngDecodeSlot } from './pngDecodeLimits';
+import { certificateVersionFromColumn, type CertificateVersion } from './agreementCertificateVersion';
 
 // ---------------------------------------------------------------------------
 // Input
 // ---------------------------------------------------------------------------
 
-export type CertificateCustomerChannel = 'emailed_link' | 'portal' | 'unknown';
+/** `signing_link` = the public token link, however it reached the client
+ *  (emailed by Breeze, or copied and shared by the technician — #10513). */
+export type CertificateCustomerChannel = 'signing_link' | 'portal' | 'unknown';
 
 /** How the acceptance happened — classified from stored columns by the loader. */
 export type CertificateHow =
@@ -75,13 +80,16 @@ export interface CertifiedAgreementDocument {
 
 export interface CertifiedAgreementInput {
   document: CertifiedAgreementDocument;
-  /** `name` = the request label, else the template name. */
+  /** `name` = the template name as it was at signing (never the staff-internal
+   *  request label, never a later rename, #10294). */
   agreement: { name: string; templateName: string; versionNumber: number | null };
   parties: { seller: string | null; client: string | null };
   source: { kind: 'quote'; quoteNumber: string | null } | { kind: 'request'; requestId: string | null };
   how: CertificateHow;
   /** Page size for an image original (a PDF original keeps its own page size). */
   pageSize: DocumentPageSize;
+  /** The wording version stamped at signing (agreementCertificateVersion.ts). */
+  certificateVersion: CertificateVersion;
 }
 
 // ---------------------------------------------------------------------------
@@ -157,10 +165,22 @@ function longDateTime(at: Date, locale: string): string {
   return `${plain(new Intl.DateTimeFormat(locale, { dateStyle: 'long', timeStyle: 'short', timeZone: 'UTC' }).format(at))} UTC`;
 }
 
-function howLines(how: Exclude<CertificateHow, { kind: 'unavailable' }>, createdAt: Date, locale: string): string[] {
+/** The token-link wording, frozen per certificate version (#10513). v1 MUST
+ *  keep printing "emailed link": it is what every pre-v2 certificate says. */
+const SIGNING_LINK_VIA: Record<CertificateVersion, string> = {
+  1: 'Electronically accepted via emailed link',
+  2: 'Electronically accepted via signing link',
+};
+
+function howLines(
+  how: Exclude<CertificateHow, { kind: 'unavailable' }>,
+  createdAt: Date,
+  locale: string,
+  version: CertificateVersion,
+): string[] {
   switch (how.kind) {
     case 'customer': {
-      const via = how.channel === 'emailed_link' ? 'Electronically accepted via emailed link'
+      const via = how.channel === 'signing_link' ? SIGNING_LINK_VIA[version]
         : how.channel === 'portal' ? 'Electronically accepted via portal'
           : 'Electronically accepted online';
       // Only the built-in typed-signature provider is a typed name + checkbox;
@@ -258,7 +278,7 @@ export function buildCertificateContent(input: CertifiedAgreementInput): Certifi
     });
     sections.push({
       heading: 'How',
-      rows: howLines(how, doc.createdAt, locale).map((value, i) => ({ label: i === 0 ? 'How' : '', value })),
+      rows: howLines(how, doc.createdAt, locale, input.certificateVersion).map((value, i) => ({ label: i === 0 ? 'How' : '', value })),
     });
   }
 
@@ -326,28 +346,64 @@ function toMergeError(err: unknown, what: string): PdfMergeError {
   return new PdfMergeError(`${what}: ${err instanceof Error ? err.message : String(err)}`);
 }
 
+/** PNG limits for a certified copy (see pngDecodeLimits.ts). A JPEG is
+ *  embedded without decoding its pixels and needs no check. */
+export const MAX_CERTIFIED_PNG_PIXELS = MAX_PNG_DECODE_PIXELS;
+export const MAX_CERTIFIED_PNG_SIDE = MAX_PNG_DECODE_SIDE;
+export const MAX_CERTIFIED_PNG_DECODED_BYTES = MAX_PNG_DECODED_BYTES;
+
+/** Refuses, before pdf-lib decodes it, a PNG `checkPngImageData` refuses: a
+ *  header outside the limits, or image data that inflates past what the
+ *  header declares (pdf-lib would drop the excess, but only after inflating
+ *  all of it). */
+async function assertPngWithinDecodeLimits(data: Buffer): Promise<void> {
+  const check = await checkPngImageData(data);
+  if (check.ok) return;
+  if (check.reason === 'too_large') {
+    throw new PdfMergeError(
+      `The signed agreement image is too large for a certified copy: ${check.detail}`,
+      422,
+      'CONTRACT_IMAGE_TOO_LARGE',
+    );
+  }
+  throw new PdfMergeError(`The signed agreement image could not be read: ${check.detail}`);
+}
+
 /** The original as PDF bytes plus its last page's size. PNG/JPEG → one image
  *  per page, scaled to fit the partner page size. */
 async function normalizeOriginal(input: CertifiedAgreementInput): Promise<{ pdf: Buffer; last: { width: number; height: number } | null }> {
   const { pdfData, mime } = input.document;
   if (mime === 'image/png' || mime === 'image/jpeg') {
+    // The checks follow the bytes, not the stored type: PNG bytes are checked
+    // whatever they are labelled.
+    if (mime === 'image/png' || hasPngSignature(pdfData)) await assertPngWithinDecodeLimits(pdfData);
     try {
-      const out = await PDFDocument.create({ updateMetadata: false });
-      const image = mime === 'image/png' ? await out.embedPng(pdfData) : await out.embedJpg(pdfData);
-      const [pw, ph] = input.pageSize === 'letter' ? PageSizes.Letter : PageSizes.A4;
-      const page = out.addPage([pw, ph]);
-      const margin = 36;
-      const scale = Math.min((pw - 2 * margin) / image.width, (ph - 2 * margin) / image.height);
-      const w = image.width * scale;
-      const h = image.height * scale;
-      page.drawImage(image, { x: (pw - w) / 2, y: (ph - h) / 2, width: w, height: h });
-      return { pdf: Buffer.from(await out.save()), last: { width: pw, height: ph } };
+      // A large PNG is decoded and saved holding the process-wide large-decode
+      // slot (pngDecodeLimits.ts), so only one is in memory at a time.
+      return await withPngDecodeSlot(pdfData, async () => {
+        const out = await PDFDocument.create({ updateMetadata: false });
+        const image = mime === 'image/png' ? await out.embedPng(pdfData) : await out.embedJpg(pdfData);
+        const [pw, ph] = input.pageSize === 'letter' ? PageSizes.Letter : PageSizes.A4;
+        const page = out.addPage([pw, ph]);
+        const margin = 36;
+        const scale = Math.min((pw - 2 * margin) / image.width, (ph - 2 * margin) / image.height);
+        const w = image.width * scale;
+        const h = image.height * scale;
+        page.drawImage(image, { x: (pw - w) / 2, y: (ph - h) / 2, width: w, height: h });
+        return { pdf: Buffer.from(await out.save()), last: { width: pw, height: ph } };
+      });
     } catch (err) {
       throw toMergeError(err, 'The signed agreement image could not be read');
     }
   }
   try {
-    const original = await PDFDocument.load(pdfData, { updateMetadata: false });
+    let original: PDFDocument;
+    try {
+      original = await loadPdfDocument(pdfData, { updateMetadata: false });
+    } catch (err) {
+      if (err instanceof PdfLoadLimitError) throw pdfTooLargeError('The signed agreement PDF', err);
+      throw err;
+    }
     const count = original.getPageCount();
     if (count + 1 > MAX_MERGED_PAGES) {
       throw new PdfMergeError(
@@ -488,13 +544,14 @@ export async function loadCertifiedAgreementInput(documentId: string): Promise<C
         acceptanceOrigin: contractDocuments.acceptanceOrigin,
         acceptanceMethod: contractDocuments.acceptanceMethod,
         acceptanceReference: contractDocuments.acceptanceReference,
+        certificateVersion: contractDocuments.certificateVersion,
         contentSha256: contractDocuments.contentSha256,
         contentHashVersion: contractDocuments.contentHashVersion,
         acceptanceRenderLocale: contractDocuments.acceptanceRenderLocale,
+        templateNameSnapshot: contractDocuments.templateNameSnapshot,
         templateName: contractTemplates.name,
         versionNumber: contractTemplateVersions.versionNumber,
         versionSha256: contractTemplateVersions.sha256,
-        requestLabel: agreementRequests.label,
         requestSeller: agreementRequests.sellerSnapshot,
         requestClient: agreementRequests.clientNameSnapshot,
         requestPublicResponseJti: agreementRequests.publicResponseJti,
@@ -532,10 +589,11 @@ export async function loadCertifiedAgreementInput(documentId: string): Promise<C
   } else {
     // A public-link accept consumes the link's jti; a logged-in portal accept
     // has none. A quote acceptance deleted before the back-fill leaves no way
-    // to tell, so the certificate says "online".
+    // to tell, so the certificate says "online". The jti says the token link
+    // was used, not how it was delivered (emailed or copied, #10513).
     const channel: CertificateCustomerChannel = isRequest
-      ? (row.requestPublicResponseJti ? 'emailed_link' : 'portal')
-      : (row.quoteAcceptanceExists ? (row.quoteAcceptanceTokenJti ? 'emailed_link' : 'portal') : 'unknown');
+      ? (row.requestPublicResponseJti ? 'signing_link' : 'portal')
+      : (row.quoteAcceptanceExists ? (row.quoteAcceptanceTokenJti ? 'signing_link' : 'portal') : 'unknown');
     how = { kind: 'customer', channel, method: row.acceptanceMethod };
   }
 
@@ -543,7 +601,10 @@ export async function loadCertifiedAgreementInput(documentId: string): Promise<C
   // is gone do the live org/partner names stand in (never a blank party).
   const seller = isRequest ? snapshotName(row.requestSeller) : snapshotName(row.quoteSeller);
   const client = isRequest ? nonBlank(row.requestClient) : nonBlank(row.quoteBillTo);
-  const templateName = nonBlank(row.templateName) ?? 'Agreement';
+  // The name frozen at signing (#10294): a later template rename must not
+  // change signed evidence. The live name stands in only for a row written
+  // without the snapshot (an instance on older code during a rolling deploy).
+  const templateName = nonBlank(row.templateNameSnapshot) ?? nonBlank(row.templateName) ?? 'Agreement';
 
   return {
     document: {
@@ -561,11 +622,15 @@ export async function loadCertifiedAgreementInput(documentId: string): Promise<C
       contentHashVersion: row.contentHashVersion,
       acceptanceRenderLocale: row.acceptanceRenderLocale,
     },
-    agreement: { name: nonBlank(row.requestLabel) ?? templateName, templateName, versionNumber: row.versionNumber ?? null },
+    // Named by the template (as it was at signing), never the staff-internal
+    // request label: the certificate and its attachment filename reach the
+    // customer (#10294).
+    agreement: { name: templateName, templateName, versionNumber: row.versionNumber ?? null },
     parties: { seller: seller ?? nonBlank(row.partnerName), client: client ?? nonBlank(row.orgName) },
     source: isRequest ? { kind: 'request', requestId: row.agreementRequestId } : { kind: 'quote', quoteNumber: row.quoteNumber ?? null },
     how,
     pageSize: resolvePageSize(row.partnerPageSize),
+    certificateVersion: certificateVersionFromColumn(row.certificateVersion),
   };
 }
 

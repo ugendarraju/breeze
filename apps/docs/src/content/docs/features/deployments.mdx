@@ -106,6 +106,7 @@ Software versions can use the **zip** package type and can carry **pre-install**
 - **Silent install arguments** are not supported for `pkg`, `dmg`, `deb` and `zip` versions and are rejected.
 - **Agent version.** Devices whose agent is older than **0.125.0** fail with `agent_update_required`, and nothing is dispatched to them.
 - **Existing versions.** Scripts stored on versions created before this release stay inactive until the version is re-created. The version manager shows a notice on those versions.
+- **Changing scripts.** A version's scripts cannot be edited after it is created; editing the version shows them read-only and keeps its target OS fixed. To change them, use **Add version** on the package: the new version starts with the latest version's active scripts, and the form accepts zip and checks the rules above before saving.
 
 Breeze also ships a small set of vendor-pinned packages built on this mechanism; see [Deploying DNS filtering clients](/features/dns-security/#deploying-dns-filtering-clients-control-d-nextdns).
 
@@ -279,6 +280,14 @@ Use per-device retry when:
 
 ---
 
+## Site-Restricted Users
+
+A deployment has no site of its own. Its target is resolved against the whole organization when it is initialized, so creating, editing, deleting, initializing, starting, pausing, resuming, or cancelling a deployment is an organization-wide change. These actions require a user with no site restriction, in addition to the usual device permission and MFA. The same rule applies when the change is requested through Breeze AI (`manage_deployments`).
+
+Users restricted to specific sites can still list and view deployments whose devices are all within their sites, view the per-device records for their sites, and retry a failed device in one of their sites. A request for a change returns `403` with a message to ask an unrestricted administrator.
+
+---
+
 ## API Reference
 
 | Method | Path | Description |
@@ -311,6 +320,9 @@ Two common causes: (1) the device was offline at the time its batch was dispatch
 
 **A device keeps failing even after retries.**
 Check device connectivity and agent status before assuming a software problem. If `retryConfig.maxRetries` has been exhausted, no further automatic retries will occur. Use the per-device retry endpoint to force one more attempt after verifying the device is healthy, but note that the retry count still applies.
+
+**A site-restricted user cannot create or start a deployment.**
+This is expected. Deployment changes affect the whole organization, so they need a user without a site restriction. See [Site-Restricted Users](#site-restricted-users).
 
 **Cannot edit or delete a deployment.**
 Only deployments in `draft` status can be modified or deleted. Once a deployment has been initialized (status `pending` or later), its configuration is locked. To start over, cancel the existing deployment and create a new one with the corrected configuration.

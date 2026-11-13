@@ -49,8 +49,6 @@ const DEVICE_DISPATCH = new RegExp(
 const NO_DEVICE_TEXT: Readonly<Record<string, string>> = {
   bootstrap_homebrew: 'queues a command and returns its id and the device id only (W12, #6782)',
   query_agent_versions: 'agent version strings and Breeze release notes only',
-  get_backup_status: 'Breeze job/snapshot status and counts only',
-  query_backups: 'admin-authored config/policy names and device hostnames only',
   get_vm_restore_estimate: 'platform/OS version labels and derived numbers only',
   instant_boot_vm: 'echoes the model-supplied VM name; Breeze-authored errors',
   restore_as_vm: 'echoes model input; Breeze-authored errors',
@@ -79,6 +77,7 @@ const NO_DEVICE_TEXT: Readonly<Record<string, string>> = {
   create_incident: 'echoes technician/AI-supplied incident fields',
   execute_containment: 'queued-command status; device output lands in incident evidence (get_incident_timeline)',
   collect_evidence: 'queued-command status; device output lands in incident evidence (get_incident_timeline)',
+  release_containment: 'queued-command id and server-owned episode scalars only; the handler drops the agent-authored lastAgentReport',
   list_incidents: 'safe projection of technician/AI-authored incident fields',
   manage_browser_policy: 'technician-authored policy fields and Breeze status only',
   // aiToolsFleet.ts became a device-command file when manage_patches scan started

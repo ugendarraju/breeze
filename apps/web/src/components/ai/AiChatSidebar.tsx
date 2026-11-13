@@ -21,7 +21,7 @@ import { usePermissions } from "@/lib/permissions";
 import AiChatMessages from "./AiChatMessages";
 import AiChatInput from "./AiChatInput";
 import AiModelPicker from "./AiModelPicker";
-import AiThinkingIndicator from "./AiThinkingIndicator";
+import AiThinkingIndicator, { approvalWaitFromPending } from "./AiThinkingIndicator";
 import AiTurnModelBadge from "./AiTurnModelBadge";
 import AiContinuationPrompt from "./AiContinuationPrompt";
 import { noSessionOrgId, useAiModelPickerStore } from "@/stores/aiModelPickerStore";
@@ -32,10 +32,11 @@ import AiConversationList from "./AiConversationList";
 import { useAiConversationSource, type ConversationRow } from "./useAiConversationSource";
 import { useContinueInPanel } from "../workspace/useContinueInPanel";
 import { showToast } from "../shared/Toast";
+import { ActionMenu } from "../shared/ActionMenu";
 import BuyCreditsLink from "./BuyCreditsLink";
 import WispThreadHeader from "./WispThreadHeader";
 import WispThreadAttachments from "./WispThreadAttachments";
-import WispWelcome from "../wisp/WispWelcome";
+import WispChatWelcome from "../wisp/WispChatWelcome";
 import { useWispScopeLabel } from "../wisp/useWispScopeLabel";
 import { wispSessionOrgId } from "@/lib/wispSession";
 import { useTranslation } from "react-i18next";
@@ -54,7 +55,7 @@ type GrantLookup =
 /**
  * The caller's active Wisp grant the panel can speak under: the partner-wide
  * grant first, then one scoped to the organization selected in the header
- * (the order WispLinkButton uses). `isNoActiveGrant` (200 `{ data: null }`,
+ * (the order WispTalkButton uses). `isNoActiveGrant` (200 `{ data: null }`,
  * #10200) is the ordinary "no grant here"; any other failure is reported as `failed` and the panel
  * stays Breeze AI without offering "Meet Wisp" — nothing about it fails
  * loudly (Review Focus 2).
@@ -112,6 +113,7 @@ export default function AiChatSidebar() {
     interruptResponse,
     isInterrupting,
     isFlagged,
+    transcriptPurgedAt,
     flagSession,
     unflagSession,
     m365Connections,
@@ -120,9 +122,11 @@ export default function AiChatSidebar() {
     loadM365Connections,
     setSelectedM365Connection,
     composerDraft,
+    composerFocusRequest,
     setComposerDraft,
     wisp,
     enterWispMode,
+    startPlainChat,
     topologySiteId,
     joinedMidResponse,
     recheckPendingApproval,
@@ -285,6 +289,8 @@ export default function AiChatSidebar() {
     // grant as it is NOW. Re-read, never the lookup from when the panel
     // opened — a grant revoked, paused or expired since then must start a
     // plain chat (and offer Meet Wisp), not a session the server refuses.
+    // A Wisp thread is one conversation (#11672): when it still has a live
+    // session, this continues it rather than forking a second one.
     if (!wisp && wispEligible) {
       const result = await lookUpActiveGrant(selectedOrgId);
       setGrantLookup(result);
@@ -295,6 +301,11 @@ export default function AiChatSidebar() {
     }
     await createSession();
   }, [closeSession, createSession, enterWispMode, wisp, wispEligible, selectedOrgId]);
+
+  // #10289: a grant is active, so "+" has a choice and a plain conversation
+  // says it isn't Wisp. `grantLookup` is only asked while `wisp` is null.
+  const plainBesideGrant = !wisp && grantLookup.kind === "active";
+  const offerPlainChat = !!wisp || plainBesideGrant;
 
   if (!canUseAi) return null;
 
@@ -334,7 +345,9 @@ export default function AiChatSidebar() {
                 ? t("aiChatSidebar.history")
                 : wisp
                   ? t("wisp.title")
-                  : t("aiChatSidebar.title")}
+                  : plainBesideGrant
+                    ? <span data-testid="ai-chat-mode-plain">{t("wisp.plainChat.label")}</span>
+                    : t("aiChatSidebar.title")}
             </span>
           </div>
 
@@ -361,7 +374,31 @@ export default function AiChatSidebar() {
                 <ExternalLink className="h-4 w-4" />
               </button>
             )}
-            {!showHistory && sessionId && (
+            {!showHistory && sessionId && offerPlainChat && (
+              <ActionMenu
+                label={t("aiChatSidebar.newConversation")}
+                testId="ai-chat-new-menu"
+                triggerClassName="rounded p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                trigger={<Plus className="h-4 w-4" aria-hidden="true" />}
+                items={[
+                  {
+                    id: "new-chat",
+                    label: t("aiConversationMove.newChat"),
+                    description: t("wisp.plainChat.wispDescription"),
+                    onSelect: () => void handleNewConversation(),
+                    testId: "ai-chat-new-conversation",
+                  },
+                  {
+                    id: "new-plain-chat",
+                    label: t("wisp.plainChat.new"),
+                    description: t("wisp.plainChat.newDescription"),
+                    onSelect: () => void startPlainChat(),
+                    testId: "ai-chat-new-plain",
+                  },
+                ]}
+              />
+            )}
+            {!showHistory && sessionId && !offerPlainChat && (
               <button
                 onClick={handleNewConversation}
                 className="rounded p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
@@ -493,6 +530,16 @@ export default function AiChatSidebar() {
                 {errorCode === "credits_exhausted" && (
                   <BuyCreditsLink className="ml-2 shrink-0 text-xs font-medium text-red-300 underline underline-offset-2 hover:text-red-200" />
                 )}
+                {errorCode === "session_closed" && !wisp && (
+                  <button
+                    type="button"
+                    data-testid="ai-session-closed-new-session"
+                    onClick={() => void createSession()}
+                    className="ml-2 shrink-0 text-xs font-medium text-red-300 underline underline-offset-2 hover:text-red-200"
+                  >
+                    {t("sessionClosed.startNew")}
+                  </button>
+                )}
                 <button
                   onClick={clearError}
                   className="text-xs text-red-400 hover:text-red-300"
@@ -525,10 +572,18 @@ export default function AiChatSidebar() {
               onPauseAi={pauseAi}
               onSendQuickAction={sendMessage}
               onIntentDecided={clearPendingApproval}
+              transcriptPurgedAt={transcriptPurgedAt}
               assistantLabel={wisp ? t("wisp.title") : undefined}
               emptyState={
                 wisp ? (
-                  <WispWelcome scopeLabel={wispScopeLabel} onSuggest={sendMessage} briefNote={false} />
+                  <WispChatWelcome
+                    key={wisp.grantId}
+                    grantId={wisp.grantId}
+                    orgId={wispSessionOrgId(wisp)}
+                    initialState={wisp.firstLookState}
+                    scopeLabel={wispScopeLabel}
+                    onSuggest={sendMessage}
+                  />
                 ) : undefined
               }
             />
@@ -536,13 +591,14 @@ export default function AiChatSidebar() {
             {/* Continuation prompt, what ran, thinking, model menu (W05) */}
             <AiContinuationPrompt />
             <AiTurnModelBadge turnModel={turnModel} />
-            <AiThinkingIndicator thinking={isStreaming && !!thinking} />
+            <AiThinkingIndicator thinking={isStreaming && !!thinking} approvalWait={isStreaming ? approvalWaitFromPending(pendingApproval) : null} />
             <AiModelPicker disabled={isStreaming} />
 
             {/* Input */}
             <AiChatInput
               onSend={sendMessage}
               value={composerDraft}
+              focusRequest={composerFocusRequest}
               onValueChange={setComposerDraft}
               onInterrupt={interruptResponse}
               disabled={isLoading}

@@ -272,6 +272,16 @@ const agentIngestSubmissionsTotal = new Counter({
   registers: [register]
 });
 
+// #11735 — Windows Security audit records dropped at event-log ingest as known
+// noise (routes/agents/eventLogNoiseFilter.ts). `event_id` is bounded by that
+// list, so its cardinality is fixed.
+const agentEventLogNoiseDroppedTotal = new Counter({
+  name: 'breeze_agent_eventlog_noise_dropped_total',
+  help: 'Windows Security event-log records dropped at ingest as known noise, by Windows event id (a re-sent batch is counted again)',
+  labelNames: ['event_id'] as const,
+  registers: [register]
+});
+
 const scriptsExecutedTotal = new Counter({
   name: 'breeze_scripts_executed_total',
   help: 'Total scripts executed',
@@ -359,6 +369,13 @@ const backupAttestationsTotal = new Counter({
   name: 'breeze_backup_attestation_total',
   help: 'Snapshot attestation outcomes, at recording (recorded, duplicate_same, conflict, binding_mismatch, invalid, missing_from_capable, not_offered, capability_unknown, missing_expectation, job_reuse_refused) and at server verification (verified, mismatch, verify_unavailable, verify_parked)',
   labelNames: ['outcome'] as const,
+  registers: [register]
+});
+
+const backupSnapshotFileIndexTotal = new Counter({
+  name: 'breeze_backup_snapshot_file_index_total',
+  help: 'Snapshot file index events: inline_dropped (a result arrived without its file list because it did not fit), hydration (a run building the index from the manifest ended) and statistics (a large publish refreshed the table\'s planner statistics), by outcome (dropped, complete, skipped, a failure code, or analyzed/busy/error)',
+  labelNames: ['event', 'outcome'] as const,
   registers: [register]
 });
 
@@ -870,6 +887,10 @@ export function recordAgentIngestSubmission(kind: AgentIngestKind, outcome: Agen
   agentIngestSubmissionsTotal.labels(kind, outcome).inc();
 }
 
+export function recordEventLogNoiseDropped(eventId: number, count: number): void {
+  agentEventLogNoiseDroppedTotal.labels(String(eventId)).inc(count);
+}
+
 export function updateBusinessMetrics(metrics: {
   devicesActive?: number;
   organizationsTotal?: number;
@@ -1005,6 +1026,14 @@ function recordBackupAttestationMetric(outcome: string, count = 1): void {
   const safeCount = safeMetricCount(count);
   if (safeCount === 0) return;
   backupAttestationsTotal.labels(normalizeMetricLabel(outcome, 'unknown')).inc(safeCount);
+}
+
+function recordSnapshotFileIndexMetric(event: string, outcome: string, count = 1): void {
+  const safeCount = safeMetricCount(count);
+  if (safeCount === 0) return;
+  backupSnapshotFileIndexTotal
+    .labels(normalizeMetricLabel(event, 'unknown'), normalizeMetricLabel(outcome, 'unknown'))
+    .inc(safeCount);
 }
 
 function recordRestoreIntegrityMetric(commandType: string, status: string, reason: string, count = 1): void {
@@ -1237,6 +1266,7 @@ function bindMetricsRecorders(): void {
     onConditionalWriteProbe: recordConditionalWriteProbeMetric,
     onSnapshotPublishRefused: recordSnapshotPublishRefusedMetric,
     onRestoreIntegrity: recordRestoreIntegrityMetric,
+    onSnapshotFileIndex: recordSnapshotFileIndexMetric,
   });
 
   setAnomalyMetricsRecorder({
@@ -1635,6 +1665,26 @@ metricsRoutes.get('/', authMiddleware, requireScope('organization', 'partner', '
   }
 });
 
+/**
+ * `device_metrics.timestamp` is `timestamp without time zone` holding UTC, so the
+ * raw fallback's date_trunc comes back as a bare "YYYY-MM-DD 00:00:00" (or a Date).
+ * Emit the same ISO-8601 `Z` form the rollup path does, so clients never have to
+ * guess the zone (#11284).
+ */
+function trendBucketToIso(bucket: unknown): string {
+  if (bucket instanceof Date) return bucket.toISOString();
+  const text = String(bucket);
+  const hasZone = /(Z|[+-]\d{2}(:?\d{2})?)$/i.test(text.replace(/^\d{4}-\d{2}-\d{2}/, ''));
+  // Postgres renders a whole-hour offset as "+00"; Date needs "+00:00".
+  const iso = text.replace(' ', 'T').replace(/([+-]\d{2})$/, '$1:00');
+  const parsed = new Date(`${iso}${hasZone ? '' : 'Z'}`);
+  if (Number.isNaN(parsed.getTime())) {
+    // Surfaces through the route's catch (500 + log) rather than shipping a non-ISO string.
+    throw new Error(`trendBucketToIso: unparseable bucket ${JSON.stringify(text)}`);
+  }
+  return parsed.toISOString();
+}
+
 metricsRoutes.get('/trends', authMiddleware, requireScope('organization', 'partner', 'system'), requireMetricsRead, async (c) => {
   // Trend metrics aggregate `metric_rollups`, which is pre-aggregated per
   // organization and carries no site axis. There is no safe site predicate to
@@ -1725,7 +1775,7 @@ metricsRoutes.get('/trends', authMiddleware, requireScope('organization', 'partn
     if (rows.length > 0) {
       return c.json(
         rows.map((r) => ({
-          timestamp: r.bucket,
+          timestamp: trendBucketToIso(r.bucket),
           cpu: Math.round(Number(r.cpu ?? 0)),
           memory: Math.round(Number(r.memory ?? 0))
         }))
