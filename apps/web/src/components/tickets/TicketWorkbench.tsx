@@ -9,6 +9,7 @@ import { fetchWithAuth, useAuthStore } from '../../stores/auth';
 import { fetchAllOrganizationsFrom } from '../../lib/fetchAllOrganizations';
 import { listCannedResponses, type CannedResponse } from '../../lib/ticketResponseTemplatesApi';
 import { runAction, ActionError } from '../../lib/runAction';
+import { permanentAttachmentRejection } from './ticketAttachmentErrors';
 import { navigateTo } from '@/lib/navigation';
 import { loginPathWithNext } from '../../lib/authScope';
 import { usePermissions } from '../../lib/permissions';
@@ -62,7 +63,7 @@ import { formatDateTime } from '@/lib/dateTimeFormat';
 import { useStableT } from '@/lib/i18n/useStableT';
 import { usePageItemName } from '../layout/usePageItemName';
 import { EntityLink } from '@/components/shared/EntityLink';
-import WispLinkButton from '@/components/wisp/WispLinkButton';
+import WispTalkButton from '@/components/wisp/WispTalkButton';
 import { TicketDeviceEditor } from './TicketDeviceEditor';
 
 // ─── TagEditor ───────────────────────────────────────────────────────────────
@@ -606,6 +607,14 @@ export default function TicketWorkbench({ ticketId, onChanged, onTicketPatched, 
     if (resolveRequestToken) openResolveForm();
   }, [resolveRequestToken, openResolveForm]);
 
+  // However the form opened (`e`, or Resolved in the status select), the note
+  // is the next thing to type: move focus there instead of leaving it on the
+  // page body. A repeat `e` while the form is open refocuses it.
+  const resolveNoteRef = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    if (resolveOpen) resolveNoteRef.current?.focus();
+  }, [resolveOpen, resolveRequestToken]);
+
   // Fetch assignees once; degrade gracefully if the endpoint is unavailable.
   // Skipped entirely when the host already supplies the list via the prop.
   useEffect(() => {
@@ -1107,6 +1116,8 @@ export default function TicketWorkbench({ ticketId, onChanged, onTicketPatched, 
     const res = await runAction({
       request: () => fetchWithAuth(`/tickets/${ticketId}/attachments`, { method: 'POST', body: form }),
       errorFallback: t('ticketWorkbench.toast.attachmentFailed'),
+      // The composer explains a permanent refusal itself (localized, names the file).
+      suppressErrorToast: (status, code) => permanentAttachmentRejection(status, code) !== null,
       onUnauthorized: () => void navigateTo(loginPathWithNext(), { replace: true })
     });
     const id = (res as { data?: { id?: string } } | undefined)?.data?.id;
@@ -1223,6 +1234,12 @@ export default function TicketWorkbench({ ticketId, onChanged, onTicketPatched, 
   // to the real status only when the form is cancelled (both cancel buttons
   // clear pendingOpen/pendingStatusId).
   const pendingDisplayStatus: TicketStatus | null = pendingOpen ?? (resolveOpen ? 'resolved' : null);
+  // Config path: the row the open form will post. The `e` shortcut opens the
+  // resolve form without a pendingStatusId (it posts {status:'resolved'}), so
+  // show that core state's system row rather than the ticket's old status.
+  const pendingDisplayStatusId = pendingDisplayStatus
+    ? pendingStatusId ?? config?.statuses.find((s) => s.coreStatus === pendingDisplayStatus && s.isSystem)?.id ?? null
+    : null;
   const headerStatusColor = ticket.statusColor ?? config?.statuses.find((s) => s.id === selectedStatusId)?.color ?? null;
   const suggestedCategoryName = triageSuggestion?.categoryId
     ? (categories.find((category) => category.id === triageSuggestion.categoryId)?.name ?? triageSuggestion.categoryName ?? t('ticketWorkbench.triage.suggestedCategory'))
@@ -1305,8 +1322,8 @@ export default function TicketWorkbench({ ticketId, onChanged, onTicketPatched, 
             </>
           )}
           {!expanded && (
-            <a href={`/tickets/${ticket.id}`} className="ml-auto rounded p-1 text-muted-foreground hover:text-foreground" title={t('ticketWorkbench.openFullPage')} data-testid="ticket-workbench-expand">
-              <ExternalLink className="h-4 w-4" />
+            <a href={`/tickets/${ticket.id}`} className="ml-auto rounded p-1 text-muted-foreground hover:text-foreground" aria-label={t('ticketWorkbench.openFullPage')} title={t('ticketWorkbench.openFullPage')} data-testid="ticket-workbench-expand">
+              <ExternalLink className="h-4 w-4" aria-hidden="true" />
             </a>
           )}
         </div>
@@ -1355,7 +1372,7 @@ export default function TicketWorkbench({ ticketId, onChanged, onTicketPatched, 
             // ticket's custom status name within its core state, falling back to
             // the system row for that core state.
             <select
-              value={pendingDisplayStatus ? (pendingStatusId ?? selectedStatusId ?? '') : (selectedStatusId ?? '')}
+              value={pendingDisplayStatusId ?? selectedStatusId ?? ''}
               onChange={(e) => void onCustomStatusChange(e.target.value)}
               disabled={merged}
               className={cn('rounded-md border border-l-4 px-2 py-1 text-xs font-medium', statusConfig[ticket.status].color)}
@@ -1526,7 +1543,7 @@ export default function TicketWorkbench({ ticketId, onChanged, onTicketPatched, 
               {t('common:actions.delete')}
             </button>
           )}
-          <WispLinkButton kind="ticket" id={ticket.id} orgId={ticket.orgId} size="sm" />
+          <WispTalkButton kind="ticket" id={ticket.id} orgId={ticket.orgId} label={ticket.subject} size="sm" />
         </div>
         {!merged && (invoiceBlocked.length > 0 || invoiceMissingRate.length > 0) && (
           <div className="mt-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-xs" data-testid="ticket-invoice-blocked" role="status">
@@ -1763,6 +1780,7 @@ export default function TicketWorkbench({ ticketId, onChanged, onTicketPatched, 
           <div className="mt-2 rounded-md border bg-muted/30 p-2" data-testid="ticket-workbench-resolve-form">
             <label className="text-xs font-medium" htmlFor="resolve-note">{t('ticketWorkbench.resolve.noteLabel')}</label>
             <textarea
+              ref={resolveNoteRef}
               id="resolve-note"
               value={resolutionNote}
               onChange={(e) => setResolutionNote(e.target.value)}
@@ -1892,7 +1910,7 @@ export default function TicketWorkbench({ ticketId, onChanged, onTicketPatched, 
                   {!merged && <button
                     type="button"
                     onClick={() => { setEditingDescription(true); }}
-                    className="shrink-0 rounded px-1.5 py-0.5 text-xs text-muted-foreground opacity-0 hover:text-foreground group-hover:opacity-100"
+                    className="shrink-0 rounded px-1.5 py-0.5 text-xs text-muted-foreground opacity-0 hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100"
                     data-testid="ticket-workbench-description-edit-btn"
                   >
                     {ticket.description ? t('common:actions.edit') : t('ticketWorkbench.description.add')}
@@ -1900,7 +1918,7 @@ export default function TicketWorkbench({ ticketId, onChanged, onTicketPatched, 
                 </div>
               )}
             </div>
-            <TicketChecklistCard ticketId={ticket.id} onCountsChange={setChecklistCounts} canSavePartnerWide={canSavePartnerWideChecklist} />
+            <TicketChecklistCard ticketId={ticket.id} onCountsChange={setChecklistCounts} canSavePartnerWide={canSavePartnerWideChecklist} readOnly={merged} />
             <TicketLinksCard key={ticket.id} ticketId={ticket.id} orgId={ticket.orgId} ticketType={ticket.ticketType} canWrite={canEdit} />
             <TicketFeed
               ticketId={ticket.id}
@@ -2015,7 +2033,7 @@ export default function TicketWorkbench({ ticketId, onChanged, onTicketPatched, 
                         {!merged && <button
                           type="button"
                           onClick={openRequesterEditor}
-                          className="shrink-0 rounded px-1 text-xs text-muted-foreground opacity-0 hover:text-foreground group-hover:opacity-100"
+                          className="shrink-0 rounded px-1 text-xs text-muted-foreground opacity-0 hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100"
                           data-testid="ticket-workbench-requester-edit"
                         >
                           {t('common:actions.edit')}

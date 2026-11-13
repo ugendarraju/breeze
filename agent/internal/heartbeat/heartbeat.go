@@ -16,7 +16,6 @@ import (
 	"regexp"
 	"runtime"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -37,6 +36,7 @@ import (
 	"github.com/breeze-rmm/agent/internal/elevaccount"
 	"github.com/breeze-rmm/agent/internal/etwlua"
 	"github.com/breeze-rmm/agent/internal/executor"
+	"github.com/breeze-rmm/agent/internal/flashguard"
 	"github.com/breeze-rmm/agent/internal/health"
 	"github.com/breeze-rmm/agent/internal/helper"
 	"github.com/breeze-rmm/agent/internal/hostpolicy"
@@ -93,6 +93,7 @@ const pendingActivationClockSkew = 10 * time.Minute
 const selfInitiatedRenewalLeadTime = 24 * time.Hour
 
 type HeartbeatPayload struct {
+	Containment         *ContainmentReport         `json:"containment,omitempty"`
 	NetworkContextV1    *networkcontext.Report     `json:"networkContextV1,omitempty"`
 	NetworkContextReset *NetworkContextReset       `json:"networkContextReset,omitempty"`
 	Metrics             *collectors.SystemMetrics  `json:"metrics,omitempty"`
@@ -269,7 +270,11 @@ func migrationSignal(server, backup string) (edition string, migrationRequired b
 // this being accurate: internal/netpolicy (Tasks 1-3) is what actually
 // enforces the policy this version number claims to be honoring.
 type SecurityCapabilities struct {
-	OutboundNetworkPolicyVersion int `json:"outboundNetworkPolicyVersion"`
+	NetworkIsolationVersion           int    `json:"networkIsolationVersion"`
+	NetworkIsolationMechanism         string `json:"networkIsolationMechanism,omitempty"`
+	NetworkIsolationUnsupportedReason string `json:"networkIsolationUnsupportedReason,omitempty"`
+	NetworkIsolationReady             bool   `json:"networkIsolationReady"`
+	OutboundNetworkPolicyVersion      int    `json:"outboundNetworkPolicyVersion"`
 	// #3409 PR4b — this build decodes `secretEnv`, injects BREEZE_VAR_*, blocks
 	// user-context runs that would drop the credential, and redacts the values
 	// out of stdout/stderr/error. Declared unconditionally: the behavior is
@@ -362,6 +367,7 @@ type DesktopAccessState struct {
 }
 
 type HeartbeatResponse struct {
+	Containment           *ContainmentDesired     `json:"containment"`
 	NetworkContextReceipt *networkcontext.Receipt `json:"networkContextReceipt,omitempty"`
 	Commands              []Command               `json:"commands"`
 	ConfigUpdate          map[string]any          `json:"configUpdate,omitempty"`
@@ -410,6 +416,9 @@ type HelperSettings struct {
 	// ("auto" | "always-on" | "on-demand"); empty means auto. Applied to the
 	// sessionbroker lifecycle, NOT to the Tauri Assist manager.
 	LifecycleMode string `json:"lifecycleMode,omitempty"`
+	// Branding is the partner/organization runtime branding decision (OD3);
+	// nil = not sent (older server), the Agent keeps its last-known branding.
+	Branding *helper.BrandingDecision `json:"branding,omitempty"`
 }
 
 type Command struct {
@@ -452,6 +461,7 @@ func (h *Heartbeat) lifecycleMode() string {
 }
 
 type Heartbeat struct {
+	containment *containmentRuntime
 	// Endpoint messaging (#8293): cards the Assist helper drew and the user has
 	// not yet closed, for replay after a helper restart; and the upstream event
 	// sink (nil = post to the API; tests override it).
@@ -667,6 +677,10 @@ type Heartbeat struct {
 	// pamDismissConsentInstance dismisses one specific consent.exe (#8995);
 	// nil means sessionBroker.DismissPamConsentInstance.
 	pamDismissConsentInstance func(session *sessionbroker.Session, id string, instance ipc.PamConsentInstance, timeout time.Duration) (ipc.PamDismissConsentResult, error)
+	// pamCloseDialog takes down the helper's own PAM dialog for dialogID
+	// before a deny dismisses consent.exe (#10370); nil means
+	// sessionBroker.ClosePamDialog.
+	pamCloseDialog func(session *sessionbroker.Session, id, dialogID string, timeout time.Duration) (ipc.PamCloseDialogResult, error)
 	// pamPendingConsents remembers the consent.exe each request parked for
 	// technician approval was raised from, so a verified pam_apply_v2 launch
 	// can dismiss that prompt and no other (pam_approved_consent.go).
@@ -805,6 +819,17 @@ type Heartbeat struct {
 	stopOnce    sync.Once
 	authMon     *authstate.Monitor
 
+	// verificationPool is the lane for backup_verify and backup_test_restore
+	// (#6106). Each waits up to backupVerificationTimeout on the backup
+	// helper; on the shared pool that wait held a slot, so a few
+	// verifications could starve scripts and monitors. It has pool's worker
+	// and queue sizes, so verifications get the concurrency they had, now in
+	// their own queue, and total pooled capacity is twice
+	// MaxConcurrentCommands. Agent-side a verification is only an IPC wait;
+	// the work runs in the helper. Nil in fixtures that never set it: the
+	// dispatch, stop and drain paths then use pool alone.
+	verificationPool *workerpool.Pool
+
 	// Command deduplication: prevents the same commandId from being
 	// executed twice when delivered via both WebSocket and heartbeat.
 	seenCommands   map[string]time.Time
@@ -856,6 +881,9 @@ type Heartbeat struct {
 	// renewCert to resume.
 	pendingMTLSCertOnDisk atomic.Bool
 	upgradeInProgress     atomic.Bool
+	// flashHoldUpgradeLogged keeps a skipped upgrade to one log line per section:
+	// the server re-sends upgradeTo on every heartbeat.
+	flashHoldUpgradeLogged atomic.Bool
 
 	// Set when PinManifestKeys returns ErrManifestTrustRotationRejected.
 	// Suspends auto-update until the rotation conflict is resolved (server
@@ -971,6 +999,21 @@ type Heartbeat struct {
 	// (checksum or manifest) on the agent, backup, user-helper and watchdog
 	// download paths. See artifact_backoff.go. Issue #7516.
 	artifactBackoff updater.TargetBackoff
+
+	// Persisted per-version latch for a self-update that restarted on the
+	// previous binary (the swap did not take). Survives the restart that
+	// every Windows attempt costs. See update_outcome.go. Issue #9751.
+	// updateHelperLogDir is where the Windows helper's failure logs are read
+	// from; "" means os.TempDir(). Both are test seams.
+	updateLatch        *updater.FailureLatch
+	updateLatchOnce    sync.Once
+	updateHelperLogDir string
+	// Episode state for upgrades deferred by an in-progress backup job, so a
+	// deferral that persists is logged above Info (update_outcome.go, #9751).
+	upgradeBackupDeferral backupDeferralState
+	// Last latch notice logged at warn by this process (update_outcome.go).
+	updateLatchNoticeMu  sync.Mutex
+	updateLatchNoticeKey string
 
 	// Path to the agent state file, set by main after startup.
 	statePath                   string
@@ -1286,6 +1329,7 @@ func NewWithVersion(cfg *config.Config, version string, token *secmem.SecureStri
 		tunnelMgr:                      tunnel.NewManager(false),
 		securityScanner:                &security.SecurityScanner{Config: cfg},
 		pool:                           workerpool.New(cfg.MaxConcurrentCommands, cfg.CommandQueueSize),
+		verificationPool:               workerpool.New(cfg.MaxConcurrentCommands, cfg.CommandQueueSize),
 		healthMon:                      health.NewMonitor(),
 		retryCfg:                       httputil.DefaultRetryConfig(),
 		seenCommands:                   make(map[string]time.Time),
@@ -1304,6 +1348,9 @@ func NewWithVersion(cfg *config.Config, version string, token *secmem.SecureStri
 	// a failed result for every command the previous process died running
 	// (#8296).
 	h.commandJournal.Recover(h.backupOutbox)
+	// After Recover has read the vendor update run marker for its synthetic
+	// result, and before any command can start a new run (#11065).
+	recoverOemRuns()
 	h.hwContext, h.hwCancel = context.WithCancel(context.Background())
 	h.initTimeSync()
 	h.initWorkloads()
@@ -1384,11 +1431,7 @@ func NewWithVersion(cfg *config.Config, version string, token *secmem.SecureStri
 					}
 				}
 
-				sessionNum, err := strconv.ParseUint(sessionKey, 10, 32)
-				if err != nil {
-					return 0, fmt.Errorf("invalid session key %q: %w", sessionKey, err)
-				}
-				return 0, sessionbroker.SpawnProcessInSessionWithArgs(binaryPath, args, uint32(sessionNum))
+				return spawnAssistDirect(sessionKey, binaryPath, args)
 			}),
 		)
 	} else {
@@ -1504,6 +1547,7 @@ func NewWithVersion(cfg *config.Config, version string, token *secmem.SecureStri
 		),
 		cfg.PatchRebootMaxPerDay,
 	)
+	flashguard.Default().SetCountdownProbe(h.rebootMgr.OSCountdownArmed)
 	// The restart card (#10190 W05): each rung is offered to the prompt host
 	// first; a rung no session can draw goes out as above, unchanged.
 	if card := h.newRestartCard(); card != nil {
@@ -1557,6 +1601,7 @@ func NewWithVersion(cfg *config.Config, version string, token *secmem.SecureStri
 	// Clean up any orphaned Screen Sharing left running from a previous crash.
 	h.tunnelMgr.CleanupOrphanedVNC()
 	h.initializeRollbackController()
+	h.initializeContainment(config.GetDataDir())
 
 	return h
 }
@@ -1934,6 +1979,20 @@ func (h *Heartbeat) handleUserHelperMessage(session *sessionbroker.Session, env 
 			}()
 			h.handleSASFromHelper(session, env)
 		}()
+	case ipc.TypeDesktopClipboardRead:
+		// Waits on the user helper for up to the clipboard proxy's timeout,
+		// so it runs off the dispatch goroutine, like SAS.
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Error("panic in handleDesktopClipboardRead", "error", fmt.Sprint(r))
+					// Answer anyway, so the helper reports the failure now
+					// instead of waiting out its timeout.
+					sendDesktopClipboardReadResult(session, env, ipc.DesktopClipboardReadResult{Error: "internal error"})
+				}
+			}()
+			h.handleDesktopClipboardRead(session, env)
+		}()
 	case ipc.TypeDesktopLeaseRenew:
 		// A helper-hosted session's lease watchdog lives in the helper, which
 		// holds no command socket. This is the inbound half of the IPC lease
@@ -2211,25 +2270,6 @@ func (h *Heartbeat) SCMSessionCh() chan<- sessionbroker.SCMSessionEvent {
 	return h.scmSessionCh
 }
 
-// checkUpdateMarker looks for the transient .update-restart file written
-// by the updater before restart. If found, deletes it and returns true
-// so the caller can skip the startup jitter and heartbeat immediately.
-func checkUpdateMarker() bool {
-	markerPath := filepath.Join(config.ConfigDir(), ".update-restart")
-	_, err := os.Stat(markerPath)
-	if err != nil {
-		if !os.IsNotExist(err) {
-			log.Warn("failed to check update marker", "path", markerPath, "error", err.Error())
-		}
-		return false
-	}
-	if removeErr := os.Remove(markerPath); removeErr != nil {
-		log.Warn("failed to remove update marker", "path", markerPath, "error", removeErr.Error())
-	}
-	log.Info("update marker found, skipping startup jitter for immediate heartbeat")
-	return true
-}
-
 func bootstrapThenListen(bootstrap func() error, listen func()) error {
 	if bootstrap != nil {
 		if err := bootstrap(); err != nil {
@@ -2276,6 +2316,7 @@ func bootstrapThenListenWithRetry(ctx context.Context, bootstrap func() error, l
 
 func (h *Heartbeat) Start() {
 	h.startHardwareHealth()
+	h.startContainment()
 	h.startTimeSync()
 	h.startWorkloads()
 	h.startPamReconciliationRetryLoop()
@@ -2302,6 +2343,10 @@ func (h *Heartbeat) Start() {
 	// receive. Runs after the reconcile above so staged material is finished
 	// first. See maybeSelfInitiateCertRenewal.
 	go h.maybeSelfInitiateCertRenewal()
+
+	// #11065 — after a firmware update's reboot, report BitLocker and the BIOS
+	// version once. A no-op when nothing is pending.
+	go h.verifyOemUpdates()
 
 	// Proactively spawn helpers into user sessions so remote desktop works
 	// instantly after reboot (Windows service only). The SCM session event
@@ -2342,8 +2387,12 @@ func (h *Heartbeat) Start() {
 	// after mass restart of agents. Skip jitter if restarting after self-update
 	// so the new version is reported immediately.
 	interval := time.Duration(h.config.HeartbeatIntervalSeconds) * time.Second
-	if checkUpdateMarker() {
-		log.Info("post-update restart: sending immediate heartbeat (jitter skipped)")
+	// Before the first heartbeat: that heartbeat re-offers the target, and a
+	// version whose swap did not take must already be latched by then (#9751).
+	marker, restartedForUpdate := h.startupUpdateReconcile(defaultUpdateMarkerPath())
+	if restartedForUpdate {
+		log.Info("post-update restart: sending immediate heartbeat (jitter skipped)",
+			"markerVersion", marker.Version, "runningVersion", h.agentVersion)
 		// On macOS, the agent self-update recreates the IPC socket. The
 		// desktop helpers lose their connection and may be waiting on
 		// backoff. Kickstart them so remote desktop recovers immediately.
@@ -2597,6 +2646,9 @@ func (h *Heartbeat) Start() {
 func (h *Heartbeat) StopAcceptingCommands() {
 	h.accepting.Store(false)
 	h.pool.StopAccepting()
+	if h.verificationPool != nil {
+		h.verificationPool.StopAccepting()
+	}
 }
 
 // DrainAndWait waits for all in-flight commands and inventory goroutines to complete,
@@ -2606,7 +2658,12 @@ func (h *Heartbeat) DrainAndWait(ctx context.Context) {
 	h.stopTimeSync()
 	h.stopWorkloads()
 	log.Info("draining in-flight commands and inventory goroutines")
+	// Both pools share ctx's deadline: their tasks run concurrently, so
+	// draining them in turn still bounds the whole wait by that deadline.
 	h.pool.Drain(ctx)
+	if h.verificationPool != nil {
+		h.verificationPool.Drain(ctx)
+	}
 	h.wg.Wait()
 
 	// Wait for inventory goroutines with deadline
@@ -4375,6 +4432,14 @@ func (h *Heartbeat) availablePatchesToMaps(patches []patching.AvailablePatch) []
 		if p.SeveritySource != "" && severity != "unknown" {
 			item["severitySource"] = p.SeveritySource
 		}
+		// Omitted, never defaulted: an absent type means the API leaves the patch
+		// with Windows Update. An API that predates the field ignores it (#11073).
+		if p.ReportedUpdateType != "" {
+			item["reportedUpdateType"] = p.ReportedUpdateType
+		}
+		if p.ReportedUpdateOwner != "" {
+			item["reportedUpdateOwner"] = p.ReportedUpdateOwner
+		}
 		items[i] = item
 	}
 	return items
@@ -4679,6 +4744,12 @@ func (h *Heartbeat) sendRecoveryKeys() {
 	}
 
 	keys, err := collectRecoveryKeys()
+	if errors.Is(err, security.ErrBitLockerUnavailable) {
+		// No BitLocker on this host (#10902): nothing to escrow, and not a
+		// failure. The security package logged it at debug and re-detects on
+		// its own TTL; keep the full interval and stay quiet.
+		return
+	}
 	if err != nil {
 		// Retry sooner than the full interval: the common transient cause is a
 		// PowerShell cold start after boot hitting its timeout, and a newly
@@ -5470,6 +5541,7 @@ func (h *Heartbeat) sendHeartbeat() {
 		// runtime check): the enforcement is compiled in, not a runtime
 		// toggle.
 		SecurityCapabilities: compiledSecurityCapabilities(),
+		Containment:          h.containmentReport(),
 		ReportedIdentity:     h.reportIdentityForBeat(),
 		// #8382 — why the last identity assertion was refused, once.
 		IdentityAssertionRejection: h.identityRejectionForBeat(),
@@ -5877,6 +5949,7 @@ func (h *Heartbeat) acknowledgeRollbackObservation(id string) {
 }
 
 func (h *Heartbeat) processHeartbeatResponse(response *HeartbeatResponse) {
+	h.reconcileContainment(response.Containment)
 	// First: a scope change purges the old MSP's prompt list entries and
 	// replaces the identity before anything else in this response can create
 	// or replay a prompt (spec §3.6).
@@ -6011,9 +6084,7 @@ func (h *Heartbeat) processHeartbeatResponse(response *HeartbeatResponse) {
 			go h.processCommand(c)
 			continue
 		}
-		if !h.pool.Submit(func() { h.processCommand(c) }) {
-			log.Warn("command rejected, worker pool full", logging.KeyCommandID, cmd.ID)
-		}
+		h.dispatchPolledCommand(c)
 	}
 
 	// Handle upgrade if requested and auto-update is enabled
@@ -7574,12 +7645,13 @@ func (h *Heartbeat) executeCommandViaPoolReportingDelivery(cmd Command) (result 
 		return h.runTrackedCommand(cmd), true
 	}
 
-	if h.pool == nil {
+	pool := h.commandPoolFor(cmd.Type)
+	if pool == nil {
 		return h.executeCommand(cmd), true
 	}
 
 	resultCh := make(chan tools.CommandResult, 1)
-	if !h.pool.Submit(func() {
+	if !pool.Submit(func() {
 		resultCh <- h.runTrackedCommand(cmd)
 	}) {
 		return tools.CommandResult{
@@ -7622,7 +7694,7 @@ func (h *Heartbeat) executeCommandViaPoolReportingDelivery(cmd Command) (result 
 				ExitCode: 1, // synthetic: no exit code observed (shutdown)
 				Error:    "agent is shutting down",
 			}, false
-		case <-h.pool.Context().Done():
+		case <-pool.Context().Done():
 			return tools.CommandResult{
 				Status:   "failed",
 				ExitCode: 1, // synthetic: no exit code observed (shutdown)
@@ -8819,8 +8891,46 @@ func (h *Heartbeat) noteCodeSignatureFailure(targetVersion string) {
 	h.badSignatureAt = time.Now()
 }
 
+// flashHoldUpgradeLog is logged once per firmware section by a skipped upgrade.
+const flashHoldUpgradeLog = "upgrade skipped: a firmware update is in progress"
+
+// flashSectionBlocksUpgrade reports an open firmware section, logging once per
+// section however many heartbeats re-offer the upgrade during it.
+func (h *Heartbeat) flashSectionBlocksUpgrade(targetVersion string) bool {
+	if _, active := flashguard.Default().Active(); !active {
+		h.flashHoldUpgradeLogged.Store(false)
+		return false
+	}
+	if h.flashHoldUpgradeLogged.CompareAndSwap(false, true) {
+		log.Info(flashHoldUpgradeLog, "targetVersion", targetVersion)
+	}
+	return true
+}
+
 // doUpgrade contains the actual upgrade logic, called by handleUpgrade.
 func (h *Heartbeat) doUpgrade(targetVersion string) {
+	if h.upgradeHeldBeforeAttempt(targetVersion) {
+		return
+	}
+
+	log.Info("upgrade requested", "targetVersion", targetVersion)
+	h.doUpgradeAttempt(targetVersion)
+}
+
+// upgradeHeldBeforeAttempt runs every gate that must hold an offer back
+// BEFORE doUpgrade announces the attempt (update_status) or downloads
+// anything. Returns true when the offer is skipped this heartbeat.
+func (h *Heartbeat) upgradeHeldBeforeAttempt(targetVersion string) bool {
+	if h.containmentBlocksUpgrade() {
+		log.Info("upgrade skipped: network isolation is active", "targetVersion", targetVersion)
+		return true
+	}
+	// Before sendUpdateStatus and any download, for the reason the checks below
+	// give. Admission is taken again around the swap: this one only saves the
+	// work, and a section can open during the prefetch.
+	if h.flashSectionBlocksUpgrade(targetVersion) {
+		return true
+	}
 	// Checked before sendUpdateStatus and before any download work: the server
 	// re-sends the same upgradeTo on every heartbeat, so without this the
 	// device would keep announcing "Updating" and re-running the whole
@@ -8829,7 +8939,7 @@ func (h *Heartbeat) doUpgrade(targetVersion string) {
 	if h.untrustedReleaseBackoffActive(targetVersion) {
 		log.Debug("upgrade skipped: server recently refused this version as untrusted; backing off",
 			"targetVersion", targetVersion)
-		return
+		return true
 	}
 	// Same reason as above: the server re-sends the same upgradeTo every
 	// heartbeat, so without this gate a version whose binary cannot pass
@@ -8837,17 +8947,25 @@ func (h *Heartbeat) doUpgrade(targetVersion string) {
 	if h.codeSignatureBackoffActive(targetVersion) {
 		log.Debug("upgrade skipped: this version's binary recently failed macOS code signature verification; backing off",
 			"targetVersion", targetVersion)
-		return
+		return true
 	}
 	// #7516: same reason again, for an agent (or blocking backup) artifact
 	// that failed checksum/manifest verification. Exponential per target, so
 	// an unsatisfiable offer costs a handful of downloads, not one a minute,
 	// while a NEW offer is attempted on the very next heartbeat.
 	if h.upgradeDeferredByArtifactBackoff(targetVersion) {
-		return
+		return true
 	}
+	// #9751: an earlier attempt at this version came back on the previous
+	// binary (on Windows, the detached swap helper failed). That outcome is
+	// only visible after the restart, so in-memory backoffs never see it;
+	// this latch is persisted and doubles per failure up to a daily retry.
+	return h.upgradeDeferredByFailureLatch(targetVersion)
+}
 
-	log.Info("upgrade requested", "targetVersion", targetVersion)
+// doUpgradeAttempt announces and runs one upgrade attempt. Only doUpgrade
+// calls it, after upgradeHeldBeforeAttempt.
+func (h *Heartbeat) doUpgradeAttempt(targetVersion string) {
 
 	h.sendUpdateStatus(targetVersion)
 	// Give the WebSocket write goroutine time to flush the update_status
@@ -8920,12 +9038,26 @@ func (h *Heartbeat) doUpgrade(targetVersion string) {
 	// backup job says nothing about whether the artifact itself is fetchable.
 	if backupPair != nil && !h.backupHelperIdle() {
 		removeStagedUpgradeTemps(userHelperPair, backupPair)
-		log.Info("agent upgrade deferred: backup job in progress; retrying next cycle", "targetVersion", targetVersion)
+		// Was a bare Info line every heartbeat, invisible at the default warn
+		// shipping level while the attempt count climbed (#9751).
+		h.noteUpgradeDeferredByBackup(targetVersion, time.Now())
+		return
+	}
+	h.clearUpgradeBackupDeferral()
+
+	done, err := flashguard.Default().AdmitPowerAction("agent_upgrade")
+	if err != nil {
+		removeStagedUpgradeTemps(userHelperPair, backupPair)
+		log.Info("agent upgrade deferred: a firmware update started during the prefetch; retrying next cycle", "targetVersion", targetVersion)
 		return
 	}
 
 	u := updater.New(updaterCfg)
-	if err := u.UpdateToWithOptions(targetVersion, updater.UpdateOptions{UserHelper: userHelperPair, Backup: backupPair}); err != nil {
+	updateErr := u.UpdateToWithOptions(targetVersion, updater.UpdateOptions{UserHelper: userHelperPair, Backup: backupPair})
+	// A successful update has started a restart that may finish after this
+	// returns (on Windows a detached helper does it), so the admission outlives it.
+	flashguard.ReleaseAfterHandoff(done, updateErr == nil)
+	if err := updateErr; err != nil {
 		// If the filesystem is read-only, stop retrying — this is permanent
 		// until the service unit is fixed or the filesystem is remounted.
 		// Intentionally NOT persisted to disk (unlike dev_push in handlers_devupdate.go)
@@ -9014,7 +9146,7 @@ func (h *Heartbeat) doUpgrade(targetVersion string) {
 // revocationLeaseProtocolVersion 0, which makes a silently dropped declaration
 // a fleet-wide outage rather than a degraded feature.
 func compiledSecurityCapabilities() SecurityCapabilities {
-	return SecurityCapabilities{
+	caps := SecurityCapabilities{
 		OutboundNetworkPolicyVersion:          1,
 		ScriptSecretEnvVersion:                1,
 		PeripheralPolicyProtocolVersion:       2,
@@ -9030,6 +9162,8 @@ func compiledSecurityCapabilities() SecurityCapabilities {
 		PromptIdentityProtocolVersion:         promptidentity.ProtocolVersion,
 		PamUserNotifyProtocolVersion:          pamUserNotifyProtocolVersion(),
 	}
+	containmentCapabilities(&caps)
+	return caps
 }
 
 // pamUserNotifyProtocolVersion is 2 on Windows builds, the only platform with

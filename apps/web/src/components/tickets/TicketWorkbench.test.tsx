@@ -35,8 +35,9 @@ vi.mock('./TicketPartsCard', () => ({
 // #5808 W01), which would block the status changes these tests assert. The
 // checklist's own behaviour is covered by TicketChecklistCard.test.tsx and
 // TicketWorkbench.checklistConfirm.test.tsx.
+const checklistCardProps = vi.hoisted(() => ({ last: null as null | { ticketId: string; readOnly?: boolean } }));
 vi.mock('./TicketChecklistCard', () => ({
-  default: () => <div data-testid="ticket-checklist-card-stub" />,
+  default: (p: { ticketId: string; readOnly?: boolean }) => { checklistCardProps.last = p; return <div data-testid="ticket-checklist-card-stub" />; },
 }));
 
 // Same reason as the checklist: the links card self-fetches /tickets/:id/links.
@@ -49,9 +50,9 @@ vi.mock('./TicketLinksCard', () => ({
 
 // The real button self-gates on the Wisp flag + grant (its own suite covers
 // that); here we only assert the header mounts it with the ticket's ref.
-vi.mock('@/components/wisp/WispLinkButton', () => ({
-  default: ({ kind, id, orgId }: { kind: string; id: string; orgId: string | null }) => (
-    <div data-testid="wisp-link-button-mock" data-kind={kind} data-id={id} data-org={orgId ?? ''} />
+vi.mock('@/components/wisp/WispTalkButton', () => ({
+  default: ({ kind, id, orgId, label }: { kind: string; id: string; orgId: string | null; label: string }) => (
+    <div data-testid="wisp-talk-button-mock" data-kind={kind} data-id={id} data-org={orgId ?? ''} data-label={label} />
   ),
 }));
 
@@ -177,12 +178,13 @@ describe('TicketWorkbench — Link to Wisp (W08 Task 10)', () => {
     vi.clearAllMocks();
   });
 
-  it('mounts the Link-to-Wisp button in the header with the loaded ticket and its org', async () => {
+  it('mounts the Talk-to-Wisp button in the header with the loaded ticket and its org', async () => {
     mockTicketApi({ 'tk-1': makeTicket({ orgId: 'org-9' }) });
     render(<TicketWorkbench ticketId="tk-1" />);
     await screen.findByTestId('ticket-workbench');
 
-    const button = screen.getByTestId('wisp-link-button-mock');
+    const button = screen.getByTestId('wisp-talk-button-mock');
+    expect(button.getAttribute('data-label')?.trim()).toBeTruthy();
     expect(button).toHaveAttribute('data-kind', 'ticket');
     expect(button).toHaveAttribute('data-id', 'tk-1');
     expect(button).toHaveAttribute('data-org', 'org-9');
@@ -290,6 +292,19 @@ describe('TicketWorkbench resolve-flow gating', () => {
     expect(screen.getByTestId('ticket-workbench-resolve-form')).toBeInTheDocument();
   });
 
+  it('opening the resolve form moves focus to the note, from `e` and from the status select', async () => {
+    mockTicketApi({ 'tk-1': makeTicket() });
+    const { rerender } = render(<TicketWorkbench ticketId="tk-1" resolveRequestToken={0} />);
+    await screen.findByTestId('ticket-workbench');
+
+    rerender(<TicketWorkbench ticketId="tk-1" resolveRequestToken={1} />);
+    await waitFor(() => expect(screen.getByTestId('ticket-workbench-resolve-note')).toHaveFocus());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    fireEvent.change(screen.getByTestId('ticket-workbench-status'), { target: { value: 'resolved' } });
+    await waitFor(() => expect(screen.getByTestId('ticket-workbench-resolve-note')).toHaveFocus());
+  });
+
   it('switching tickets closes the resolve form and clears the note', async () => {
     mockTicketApi({
       'tk-a': makeTicket({ id: 'tk-a', internalNumber: 'T-2026-0001', subject: 'Ticket A' }),
@@ -314,6 +329,31 @@ describe('TicketWorkbench resolve-flow gating', () => {
     fireEvent.change(screen.getByTestId('ticket-workbench-status'), { target: { value: 'resolved' } });
     expect(screen.getByTestId('ticket-workbench-resolve-note')).toHaveValue('');
     expect(mutationCalls()).toHaveLength(0);
+  });
+});
+
+describe('TicketWorkbench keyboard and screen-reader affordances', () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  it('names the icon-only "open full page" link with aria-label, not only a tooltip', async () => {
+    mockTicketApi({ 'tk-1': makeTicket() });
+    render(<TicketWorkbench ticketId="tk-1" />);
+    const link = await screen.findByTestId('ticket-workbench-expand');
+    expect(link).toHaveAttribute('aria-label', 'Open full page');
+    expect(link).toHaveAccessibleName('Open full page');
+    expect(link.querySelector('svg')).toHaveAttribute('aria-hidden', 'true');
+  });
+
+  it('shows the hover-only Edit buttons when they take keyboard focus', async () => {
+    mockTicketApi({ 'tk-1': makeTicket({ description: 'Toner is out' }) });
+    render(<TicketWorkbench ticketId="tk-1" />);
+    const description = await screen.findByTestId('ticket-workbench-description-edit-btn');
+    const requester = screen.getByTestId('ticket-workbench-requester-edit');
+    for (const button of [description, requester]) {
+      expect(button.className).toContain('opacity-0');
+      expect(button.className).toContain('group-hover:opacity-100');
+      expect(button.className).toContain('focus-visible:opacity-100');
+    }
   });
 });
 
@@ -1583,7 +1623,7 @@ describe('TicketWorkbench sticky composer across refreshes', () => {
 
     await screen.findByTestId('ticket-workbench');
     fireEvent.click(screen.getByTestId('ticket-composer-tab-internal'));
-    expect(screen.getByTestId('ticket-composer-tab-internal')).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByTestId('ticket-composer-tab-internal')).toHaveAttribute('aria-checked', 'true');
 
     fireEvent.change(screen.getByTestId('ticket-composer-input'), { target: { value: 'internal note body' } });
     fireEvent.click(screen.getByTestId('ticket-composer-send'));
@@ -1601,7 +1641,7 @@ describe('TicketWorkbench sticky composer across refreshes', () => {
 
     // Mid-refresh: the skeleton must NOT replace the mounted tree.
     expect(screen.queryByTestId('ticket-workbench-loading')).toBeNull();
-    expect(screen.getByTestId('ticket-composer-tab-internal')).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByTestId('ticket-composer-tab-internal')).toHaveAttribute('aria-checked', 'true');
 
     releaseReload!();
 
@@ -1609,7 +1649,7 @@ describe('TicketWorkbench sticky composer across refreshes', () => {
     await waitFor(() => {
       expect(screen.getByTestId('ticket-workbench')).not.toHaveAttribute('aria-busy');
     });
-    expect(screen.getByTestId('ticket-composer-tab-internal')).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByTestId('ticket-composer-tab-internal')).toHaveAttribute('aria-checked', 'true');
   });
 
   it('switching tickets still shows the skeleton and resets the composer (no draft/mode leak)', async () => {
@@ -1630,7 +1670,7 @@ describe('TicketWorkbench sticky composer across refreshes', () => {
     });
     // Ticket B must not inherit ticket A's draft or internal mode.
     expect(screen.getByTestId('ticket-composer-input')).toHaveValue('');
-    expect(screen.getByTestId('ticket-composer-tab-reply')).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByTestId('ticket-composer-tab-reply')).toHaveAttribute('aria-checked', 'true');
   });
 });
 
@@ -1914,6 +1954,24 @@ describe('TicketWorkbench custom-status select (config path)', () => {
     await waitFor(() => expect(select.querySelectorAll('optgroup').length).toBeGreaterThan(0));
     // Selected option is the matching custom row.
     await waitFor(() => expect(select.value).toBe('st-waiting'));
+  });
+
+  // The `e` route opens the form without a pendingStatusId; the select used
+  // to keep showing the old status while the Resolve form was open.
+  it('`e` shows the Resolved row in the status select while the form is open, and Cancel restores it', async () => {
+    fetchConfigMock.mockResolvedValue(makeConfig());
+    mockTicketApi({ 'tk-1': makeTicket({ status: 'open' }) });
+    const { rerender } = render(<TicketWorkbench ticketId="tk-1" resolveRequestToken={0} />);
+    const select = await screen.findByTestId('ticket-workbench-status') as HTMLSelectElement;
+    await waitFor(() => expect(select.querySelectorAll('optgroup').length).toBeGreaterThan(0));
+    expect(select.value).toBe('st-open');
+
+    rerender(<TicketWorkbench ticketId="tk-1" resolveRequestToken={1} />);
+    expect(screen.getByTestId('ticket-workbench-resolve-form')).toBeInTheDocument();
+    expect(select.value).toBe('st-resolved');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(select.value).toBe('st-open');
   });
 
   it('cancelling the resolve form clears pendingStatusId so a subsequent `e` shortcut posts {status:resolved}', async () => {
@@ -3470,6 +3528,7 @@ describe('TicketWorkbench — merged tombstone (#8972)', () => {
       expect(screen.getByTestId(id), id).toBeDisabled();
     }
     expect(partsCardProps.last).toMatchObject({ ticketId: 'tk-1', readOnly: true });
+    expect(checklistCardProps.last).toMatchObject({ ticketId: 'tk-1', readOnly: true });
     expect(screen.getByTestId('ticket-rail-merged-readonly')).toHaveTextContent('Time, billing and parts are read-only');
     expect(screen.getByTestId('ticket-rail-merged-link')).toHaveAttribute('href', '/tickets/tk-surv');
     expect(screen.getByTestId('ticket-rail-merged-link')).toHaveTextContent('Open T-2026-0002');
@@ -3486,6 +3545,7 @@ describe('TicketWorkbench — merged tombstone (#8972)', () => {
     expect(screen.queryByTestId('ticket-rail-merged-readonly')).toBeNull();
     expect(screen.getByTestId('ticket-billing-start-timer')).toBeEnabled();
     expect(partsCardProps.last).toMatchObject({ readOnly: false });
+    expect(checklistCardProps.last).toMatchObject({ readOnly: false });
   });
 });
 
@@ -3525,7 +3585,7 @@ describe('TicketWorkbench — Offboard a person launcher', () => {
   async function resetFeatures() {
     const { useFeaturesStore } = await import('../../stores/featuresStore');
     useFeaturesStore.setState({
-      features: { billing: false, support: false, aiOperatorTasks: false, aiAgentsSweepAct: false, toolSources: false, flows: false, preAssignmentEnrollment: false, callerVerification: false, sendingDomains: false },
+      features: { billing: false, support: false, aiOperatorTasks: false, aiAgentsSweepAct: false, aiAgentsPolicyDecide: false, toolSources: false, flows: false, preAssignmentEnrollment: false, callerVerification: false, sendingDomains: false, vendorUpdates: false },
       loaded: false,
     });
   }
@@ -3614,7 +3674,7 @@ describe('TicketWorkbench — Onboard a person launcher', () => {
   async function resetFeatures() {
     const { useFeaturesStore } = await import('../../stores/featuresStore');
     useFeaturesStore.setState({
-      features: { billing: false, support: false, aiOperatorTasks: false, aiAgentsSweepAct: false, toolSources: false, flows: false, preAssignmentEnrollment: false, callerVerification: false, sendingDomains: false },
+      features: { billing: false, support: false, aiOperatorTasks: false, aiAgentsSweepAct: false, aiAgentsPolicyDecide: false, toolSources: false, flows: false, preAssignmentEnrollment: false, callerVerification: false, sendingDomains: false, vendorUpdates: false },
       loaded: false,
     });
   }
