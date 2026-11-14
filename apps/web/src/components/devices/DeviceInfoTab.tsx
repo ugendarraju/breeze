@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { totalDiskCapacityGb, type DiskSizeFields } from "./diskTotal";
 import {
   Monitor,
   Cpu,
@@ -632,6 +633,24 @@ export default function DeviceInfoTab({ deviceId }: DeviceInfoTabProps) {
     fetchInfo();
   }, [fetchInfo]);
 
+  // fork: the agent's diskTotalGb is the system drive only; total the drive
+  // list like the Hardware tab does. On failure the agent value stands.
+  const [disks, setDisks] = useState<DiskSizeFields[] | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    fetchWithAuth(`/devices/${deviceId}/hardware`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((json) => {
+        const payload = json?.data ?? json;
+        const list = payload?.disks ?? payload?.diskDrives ?? payload?.drives;
+        if (!cancelled && Array.isArray(list)) setDisks(list);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [deviceId]);
+
   useEffect(() => {
     fetchWithAuth("/custom-fields")
       .then((r) => {
@@ -1160,7 +1179,7 @@ export default function DeviceInfoTab({ deviceId }: DeviceInfoTabProps) {
         />
         <InfoRow
           label={t("deviceInfoTab.diskTotal")}
-          value={formatDisk(hw?.diskTotalGb)}
+          value={formatDisk(totalDiskCapacityGb(disks, hw?.diskTotalGb))}
         />
         <GpuInfoRow value={hw?.gpuModel} />
         <InfoRow

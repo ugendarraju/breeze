@@ -3,6 +3,7 @@ import { Cpu, HardDrive, MemoryStick, Network } from "lucide-react";
 import { fetchWithAuth } from "../../stores/auth";
 import DeviceWarrantyCard from "./DeviceWarrantyCard";
 import StorageHealthSection from "./hardware/StorageHealthSection";
+import { totalDiskCapacityGb } from "./diskTotal";
 import { formatNumber } from "@/lib/i18n/format";
 import { useTranslation } from "react-i18next";
 import "../../lib/i18n";
@@ -269,25 +270,10 @@ export default function DeviceHardwareInventory({
   }, [memoryModules, hardware?.memoryObservedAt, hardware?.memorySlotsTotal, hardware?.memorySoldered]);
 
   // Compute total storage from disks
-  const totalStorageGb = useMemo(() => {
-    if (!disks || disks.length === 0) return hardware?.diskTotalGb ?? null;
-    const seen = new Set<string>();
-    let total = 0;
-    for (const disk of disks) {
-      const size = toNumber(
-        disk.totalGb ?? disk.sizeGb ?? disk.capacityGb ?? null,
-      );
-      const deviceKey = disk.device ?? disk.mountPoint ?? disk.id;
-      if (disk.mountPoint === "/" || disk.mountPoint === "C:\\") {
-        return size;
-      }
-      if (deviceKey && !seen.has(deviceKey)) {
-        seen.add(deviceKey);
-        total += size ?? 0;
-      }
-    }
-    return total > 0 ? total : (hardware?.diskTotalGb ?? null);
-  }, [disks, hardware?.diskTotalGb]);
+  const totalStorageGb = useMemo(
+    () => totalDiskCapacityGb(disks, hardware?.diskTotalGb), // fork: shared with DeviceInfoTab
+    [disks, hardware?.diskTotalGb],
+  );
 
   if (loading) {
     return (
