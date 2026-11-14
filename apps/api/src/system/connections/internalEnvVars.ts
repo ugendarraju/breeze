@@ -225,6 +225,7 @@ export const INTERNAL_ENV_VARS: Readonly<Record<string, string>> = {
   ENABLE_AI_PATCH_TESTING: 'feature flag',
   ENABLE_API_DOCS_UI: 'feature flag',
   ENABLE_REGISTRATION: 'signup policy flag',
+  PARTNER_SIGNUP_INVITE_ONLY: 'signup policy flag (fork: invite-only technician signup)',
   ENABLE_TOOL_SEARCH: 'SDK child env, written per session by aiToolSearchPolicy',
   // ENROLLMENT_*
   ENROLLMENT_KEY_CLEANUP_ENABLED: 'cleanup job toggle',

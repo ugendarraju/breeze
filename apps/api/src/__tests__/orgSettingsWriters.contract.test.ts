@@ -35,7 +35,7 @@ const WRITERS: Record<string, Classification> = {
   'src/routes/admin/autopayRollout.ts': { sites: 1, kind: 'no-agent-settings', reason: 'partners.autopayEnabled only' },
   'src/routes/agents/enrollment.ts': { sites: 1, kind: 'no-agent-settings', reason: 'partners.probationEnrollments counter only' },
   'src/routes/agents/mtls.ts': { sites: 3, kind: 'invalidates', via: 'invalidateOrgHelperSettingsCache' },
-  'src/routes/auth/verifyEmail.ts': { sites: 3, kind: 'no-agent-settings', reason: 'partners emailVerifiedAt/status, settings.statusMessage/statusAction* only' },
+  'src/routes/auth/verifyEmail.ts': { sites: 4, kind: 'no-agent-settings', reason: 'partners emailVerifiedAt/status, settings.statusMessage/statusAction* only (fork: +1 invited-partner approval statusMessage)' },
   'src/routes/internal/synthetic.ts': { sites: 1, kind: 'no-agent-settings', reason: 'partners Stripe payment-method columns only' },
   'src/routes/alerts/lifecycleDefaults.ts': { sites: 2, kind: 'no-agent-settings', reason: 'alert_* lifecycle columns only (#10765); the agent caches read none of them' },
   'src/routes/connectionHealthSettings.ts': { sites: 2, kind: 'no-agent-settings', reason: 'settings.connectionHealth.customerAdminsNotified only (path-level jsonb_set)' },
