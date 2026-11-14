@@ -122,7 +122,7 @@ describe('POST /register-partner — invite-only technician signup (fork)', () =
     const res = await post({ ...VALID_BODY, inviteToken: TOKEN });
     expect(res.status).toBe(200);
     expect(claimInvite).toHaveBeenCalledWith(TOKEN, { email: VALID_BODY.email, companyName: VALID_BODY.companyName });
-    expect(vi.mocked(createPendingRegistration).mock.calls[0][0]).toMatchObject({ signupInviteId: CLAIMED.id });
+    expect(vi.mocked(createPendingRegistration).mock.calls[0]?.[0]).toMatchObject({ signupInviteId: CLAIMED.id });
   });
 
   it('does not burn the link when the form fails validation', async () => {
@@ -145,7 +145,7 @@ describe('POST /register-partner — invite-only technician signup (fork)', () =
     vi.mocked(partnerSignupInviteOnly).mockReturnValue(false);
     const res = await post(VALID_BODY);
     expect(res.status).toBe(200);
-    expect(vi.mocked(createPendingRegistration).mock.calls[0][0]).not.toHaveProperty('signupInviteId');
+    expect(vi.mocked(createPendingRegistration).mock.calls[0]?.[0]).not.toHaveProperty('signupInviteId');
     expect(hashPassword).toHaveBeenCalled();
   });
 

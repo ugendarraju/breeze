@@ -111,8 +111,8 @@ describe('partnerSignupInvites', () => {
     // The real token key would have expired by TTL; the record check is the backstop.
     expect(await claimInvite(token, ATTEMPT)).toBeNull();
     const [listed] = await listInvites();
-    expect(listed.id).toBe(invite.id);
-    expect(listed.status).toBe('expired');
+    expect(listed?.id).toBe(invite.id);
+    expect(listed?.status).toBe('expired');
   });
 
   it('clamps the lifetime to 1..30 days', async () => {
