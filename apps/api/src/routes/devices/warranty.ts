@@ -10,6 +10,11 @@ import { authMiddleware, requireMfa, requirePermission, requireScope } from '../
 import { getDeviceWithOrgAndSiteCheck, SITE_ACCESS_DENIED } from './helpers';
 import { queueWarrantySyncForDevice } from '../../services/warrantyWorker';
 import { PERMISSIONS, type UserPermissions } from '../../services/permissions';
+// fork: manual warranty dates
+import { z } from 'zod';
+import { zValidator } from '../../lib/validation';
+import { applyWarrantyImport } from '../../services/customFields/import/warrantyTarget';
+import { writeRouteAudit } from '../../services/auditEvents';
 
 export const warrantyRoutes = new Hono();
 
@@ -106,6 +111,79 @@ warrantyRoutes.post(
     await queueWarrantySyncForDevice(deviceId, { force: true });
 
     return c.json({ message: 'Warranty refresh queued' });
+  }
+);
+
+// fork: PUT /devices/:id/warranty/manual - technician enters warranty dates by
+// hand, for vendors without a usable lookup (ASUS, Acer, Microsoft, ...).
+// Stored exactly like a CSV-imported warranty (data_source 'import', via
+// applyWarrantyImport), so the provider sync leaves it alone unless a vendor
+// later returns LONGER coverage, and agent-owned rows are never overwritten.
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const manualWarrantySchema = z
+  .object({
+    warrantyStartDate: z.string().regex(ISO_DATE).nullable().optional(),
+    warrantyEndDate: z.string().regex(ISO_DATE).nullable(),
+  })
+  .refine(
+    (v) => !v.warrantyStartDate || !v.warrantyEndDate || v.warrantyStartDate <= v.warrantyEndDate,
+    { message: 'Start date must be on or before the end date', path: ['warrantyStartDate'] },
+  );
+
+warrantyRoutes.put(
+  '/:id/warranty/manual',
+  requireScope('organization', 'partner', 'system'),
+  requirePermission(PERMISSIONS.DEVICES_WRITE.resource, PERMISSIONS.DEVICES_WRITE.action),
+  requireMfa(),
+  zValidator('json', manualWarrantySchema),
+  async (c) => {
+    const auth = c.get('auth');
+    const deviceId = c.req.param('id')!;
+    const body = c.req.valid('json');
+
+    const device = await getDeviceWithOrgAndSiteCheck(c, deviceId, auth);
+    if (device === SITE_ACCESS_DENIED) {
+      return c.json({ error: 'Access to this site denied' }, 403);
+    }
+    if (!device) {
+      return c.json({ error: 'Device not found' }, 404);
+    }
+
+    const outcome = await db.transaction((tx) =>
+      applyWarrantyImport(
+        tx,
+        {
+          deviceId,
+          orgId: device.orgId,
+          warrantyEndDate: body.warrantyEndDate,
+          ...(body.warrantyStartDate !== undefined ? { warrantyStartDate: body.warrantyStartDate } : {}),
+        },
+        // A hand-typed date outranks a vendor lookup that found nothing; the
+        // device's own agent-reported warranty still wins (it would be rewritten).
+        { overrideProvider: true },
+      ),
+    );
+    if (outcome === 'skipped-provider-owned') {
+      return c.json(
+        { error: 'This device reports its own warranty, so it cannot be edited by hand.', code: 'WARRANTY_AGENT_OWNED' },
+        409,
+      );
+    }
+
+    writeRouteAudit(c, {
+      orgId: device.orgId,
+      action: 'device.warranty.manual_update',
+      resourceType: 'device',
+      resourceId: deviceId,
+      details: { warrantyStartDate: body.warrantyStartDate ?? null, warrantyEndDate: body.warrantyEndDate },
+    });
+
+    const [warranty] = await db
+      .select()
+      .from(deviceWarranty)
+      .where(eq(deviceWarranty.deviceId, deviceId))
+      .limit(1);
+    return c.json({ warranty: warranty ?? null });
   }
 );
 
