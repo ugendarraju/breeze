@@ -50,6 +50,8 @@ interface FeaturesState {
   features: Features;
   cfAccessLogin: CfAccessLoginConfig;
   registration: RegistrationConfig;
+  /** fork: signup needs a one-time invite link (PARTNER_SIGNUP_INVITE_ONLY). */
+  signupInviteOnly: boolean;
   softwarePackages: SoftwarePackagesConfig;
   loaded: boolean;
   /** True only once /config answered and parsed. `loaded` is also true after a
@@ -94,6 +96,7 @@ export const useFeaturesStore = create<FeaturesState>()((set, get) => {
         cfAccessLogin?: Partial<CfAccessLoginConfig>;
         registration?: Partial<RegistrationConfig>;
         softwarePackages?: Partial<SoftwarePackagesConfig>;
+        signupInvites?: { inviteOnly?: boolean }; // fork
       };
       set({
         features: {
@@ -125,6 +128,7 @@ export const useFeaturesStore = create<FeaturesState>()((set, get) => {
         registration: {
           enabled: !!data.registration?.enabled,
         },
+        signupInviteOnly: !!data.signupInvites?.inviteOnly, // fork
         softwarePackages: {
           // Missing field (older API) keeps the open default.
           uploadsEnabled: data.softwarePackages?.uploadsEnabled !== false,
@@ -142,6 +146,7 @@ export const useFeaturesStore = create<FeaturesState>()((set, get) => {
     features: DEFAULT_FEATURES,
     cfAccessLogin: DEFAULT_CF_ACCESS,
     registration: DEFAULT_REGISTRATION,
+    signupInviteOnly: false, // fork
     softwarePackages: DEFAULT_SOFTWARE_PACKAGES,
     loaded: false,
     configOk: false,
@@ -167,14 +172,15 @@ export function useFeatures(): Features {
 // passes `active: false` while it is still resolving whether an
 // already-signed-in visitor should be redirected to the dashboard instead,
 // so /config's fetchWithAuth call can't race that page's own session check.
-export function useRegistrationGate(active = true): { enabled: boolean; loaded: boolean } {
+export function useRegistrationGate(active = true): { enabled: boolean; loaded: boolean; inviteOnly: boolean } {
   const enabled = useFeaturesStore((s) => s.registration.enabled);
+  const inviteOnly = useFeaturesStore((s) => s.signupInviteOnly);
   const loaded = useFeaturesStore((s) => s.loaded);
   const load = useFeaturesStore((s) => s.load);
   useEffect(() => {
     if (active) void load();
   }, [active, load]);
-  return { enabled, loaded };
+  return { enabled, loaded, inviteOnly };
 }
 
 // useAiOperatorTasksGate ensures the runtime /config is loaded and reports

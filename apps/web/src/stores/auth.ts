@@ -1952,7 +1952,8 @@ export async function apiRegisterPartner(
   email: string,
   password: string,
   name: string,
-  signupIntent?: SignupIntent
+  signupIntent?: SignupIntent,
+  inviteToken?: string // fork: one-time technician invite
 ): Promise<
   | { success: true; message: string }
   | { success: false; error: string; action?: { url: string; label: string } }
@@ -1962,7 +1963,11 @@ export async function apiRegisterPartner(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
-      body: JSON.stringify({ companyName, email, password, name, acceptTerms: true, ...(signupIntent ? { signupIntent } : {}) })
+      body: JSON.stringify({
+        companyName, email, password, name, acceptTerms: true,
+        ...(signupIntent ? { signupIntent } : {}),
+        ...(inviteToken ? { inviteToken } : {}),
+      })
     });
 
     const data = await response.json();

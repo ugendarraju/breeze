@@ -25,6 +25,12 @@ import {
 import { enqueueRegistrationVerification } from '../../services/authEmailQueue';
 import { getTrustedClientIpOrUndefined } from '../../services/clientIp';
 import {
+  claimInvite,
+  partnerSignupInviteOnly,
+  releaseInviteClaim,
+  type PartnerSignupInviteRecord,
+} from '../../services/partnerSignupInvites';
+import {
   runWithSystemDbAccess,
   getClientRateLimitKey,
   authResponseFloorPromise,
@@ -102,7 +108,13 @@ registerRoutes.post('/register-partner', zValidator('json', registerPartnerSchem
     return registrationDisabledResponse(c);
   }
 
-  const { companyName, email, password, name, acceptTerms, signupIntent, purchaseSelection } = c.req.valid('json');
+  const { companyName, email, password, name, acceptTerms, signupIntent, purchaseSelection, inviteToken } = c.req.valid('json');
+  // fork: invite-only technician signup. A missing invite is input-dependent
+  // (not account-dependent), so refusing here discloses nothing about the email.
+  if (!inviteToken && partnerSignupInviteOnly()) {
+    await floorPromise;
+    return c.json({ error: 'Signup is by invitation only. Ask your administrator for an invite link.', code: 'INVITE_REQUIRED' }, 403);
+  }
   const rateLimitClient = getClientRateLimitKey(c);
 
   // Self-hosted single-tenant installs need the seeded admin to finish setup
@@ -212,6 +224,27 @@ registerRoutes.post('/register-partner', zValidator('json', registerPartnerSchem
   // handler's latency uniform regardless of whether the address has an account.
   const passwordHash = await hashPassword(password);
 
+  // fork: claim the one-time invite. Placed after every input check so a typo
+  // in the form never burns the link; released again if parking fails below.
+  let claimedInvite: PartnerSignupInviteRecord | null = null;
+  if (inviteToken) {
+    try {
+      claimedInvite = await claimInvite(inviteToken, { email, companyName });
+    } catch (err) {
+      console.error('[register-partner] invite claim failed', err);
+      captureException(err, c);
+      await floorPromise;
+      return c.json({ error: 'Service temporarily unavailable' }, 503);
+    }
+    if (!claimedInvite) {
+      await floorPromise;
+      return c.json({
+        error: 'This invite link is invalid, expired or has already been used. Ask your administrator for a new one.',
+        code: 'INVITE_INVALID',
+      }, 400);
+    }
+  }
+
   // SR2-21: no user-existence lookup. Park the pending registration and let the
   // worker (which the requester cannot observe) decide what to send. The record
   // carries the step-1 abuse attribution (#2343): the LIVE step-1 request's
@@ -232,6 +265,7 @@ registerRoutes.post('/register-partner', zValidator('json', registerPartnerSchem
       signupIntent: normalizeSignupIntent(signupIntent ?? purchaseSelection),
       signupIp: getTrustedClientIpOrUndefined(c),
       signupUserAgent: c.req.header('user-agent'),
+      ...(claimedInvite ? { signupInviteId: claimedInvite.id } : {}),
     });
     tokenHash = created.tokenHash;
     // The raw token never leaves createPendingRegistration except inside the
@@ -240,6 +274,7 @@ registerRoutes.post('/register-partner', zValidator('json', registerPartnerSchem
   } catch (err) {
     console.error('[register-partner] pending-registration write failed', err);
     captureException(err, c);
+    if (claimedInvite) await releaseInviteClaim(claimedInvite).catch(() => undefined);
     await floorPromise;
     return c.json({ error: 'Service temporarily unavailable' }, 503);
   }

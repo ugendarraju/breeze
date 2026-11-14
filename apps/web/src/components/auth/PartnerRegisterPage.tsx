@@ -93,7 +93,12 @@ export default function PartnerRegisterPage(_props: PartnerRegisterPageProps = {
   // to load before deciding, so an open deployment never flashes the redirect.
   // `active: sessionChecked` defers the /config fetch (see above) until the
   // already-signed-in check above has resolved.
-  const { enabled: registrationEnabled, loaded: gateLoaded } = useRegistrationGate(sessionChecked);
+  const { enabled: registrationEnabled, loaded: gateLoaded, inviteOnly } = useRegistrationGate(sessionChecked);
+  // fork: one-time technician invite, carried in the fragment (#invite=…) so it
+  // never reaches server or proxy logs.
+  const [inviteToken] = useState(() =>
+    typeof window === 'undefined' ? '' : new URLSearchParams(window.location.hash.slice(1)).get('invite') ?? '',
+  );
   useEffect(() => {
     if (handoff && sessionChecked && gateLoaded && !registrationEnabled) {
       void navigateTo(`/login?reason=registration-disabled&next=${encodeURIComponent(billingPlansUrl)}`);
@@ -111,13 +116,9 @@ export default function PartnerRegisterPage(_props: PartnerRegisterPageProps = {
     setError(undefined);
     setErrorAction(undefined);
 
-    const result = await apiRegisterPartner(
-      values.companyName,
-      values.email,
-      values.password,
-      values.name,
-      signupIntent
-    );
+    const args = [values.companyName, values.email, values.password, values.name, signupIntent] as const;
+    // fork: pass the invite only when the link carried one.
+    const result = inviteToken ? await apiRegisterPartner(...args, inviteToken) : await apiRegisterPartner(...args);
 
     if (!result.success) {
       setError(result.error);
@@ -147,6 +148,24 @@ export default function PartnerRegisterPage(_props: PartnerRegisterPageProps = {
   // effect above is redirecting), render nothing rather than the form.
   if (!gateLoaded || !registrationEnabled) {
     return null;
+  }
+
+  // fork: invite-only signup and no invite in the link.
+  if (inviteOnly && !inviteToken) {
+    return (
+      <div data-testid="register-invite-required" className="space-y-4 rounded-lg border bg-card p-6 text-center shadow-xs">
+        <h2 className="text-lg font-semibold">Signup is by invitation only</h2>
+        <p className="text-sm text-muted-foreground">
+          Ask your administrator for an invite link, then open that link to create your account.
+        </p>
+        <a
+          href="/login"
+          className="flex h-11 w-full items-center justify-center rounded-md border text-sm font-medium transition hover:bg-muted"
+        >
+          {t('common.backToSignIn', { defaultValue: 'Back to sign in' })}
+        </a>
+      </div>
+    );
   }
 
   if (submitted) {

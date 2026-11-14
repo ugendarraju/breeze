@@ -1,8 +1,12 @@
 ---
 import DashboardLayout from '../../layouts/DashboardLayout.astro';
 import PartnersAdmin from '../../components/admin/PartnersAdmin';
+import PartnerInvitesPanel from '../../components/admin/PartnerInvitesPanel';
 ---
 
 <DashboardLayout title="Partners">
-  <PartnersAdmin client:load />
+  <div class="space-y-8">
+    <PartnersAdmin client:load />
+    <PartnerInvitesPanel client:load />
+  </div>
 </DashboardLayout>

@@ -41,6 +41,8 @@ export interface PendingRegistration {
   // signup-abuse corpus).
   signupIp?: string;
   signupUserAgent?: string;
+  /** fork: the claimed technician invite (services/partnerSignupInvites.ts). */
+  signupInviteId?: string;
 }
 
 /** Peek/consume return the stored value, which additionally carries the raw token. */

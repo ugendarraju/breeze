@@ -21,11 +21,13 @@ import { systemConnectionHealthAdminRoutes } from './systemConnectionHealth';
 import { adminAutopayRolloutRoutes } from './autopayRollout';
 import { entitlementsAdminRoutes } from './entitlements';
 import { wispAdminRoutes } from './wisp';
+import { partnerSignupInviteAdminRoutes } from './partnerSignupInvites'; // fork: technician invites
 
 export const adminRoutes = new Hono();
 
 adminRoutes.use('*', platformAdminMiddleware);
 adminRoutes.route('/', adminAutopayRolloutRoutes);
+adminRoutes.route('/partner-invites', partnerSignupInviteAdminRoutes); // fork: technician invites
 adminRoutes.route('/', abuseRoutes);
 adminRoutes.route('/', trustAdminRoutes);
 adminRoutes.route('/', trustActionAdminRoutes);

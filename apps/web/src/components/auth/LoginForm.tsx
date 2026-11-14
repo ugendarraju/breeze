@@ -67,7 +67,9 @@ export default function LoginForm({
   // constant — prebuilt images can't honor PUBLIC_ENABLE_REGISTRATION (#1308).
   // Hidden until /config confirms it's enabled, so we never flash a link that
   // the server would reject.
-  const { enabled: registrationEnabled } = useRegistrationGate();
+  const { enabled: registrationOpen, inviteOnly } = useRegistrationGate();
+  // fork: with invite-only signup the link would only lead to "ask for an invite".
+  const registrationEnabled = registrationOpen && !inviteOnly;
 
   // Collapsed: the password controls are replaced by the SSO button. Enter in
   // the email field and a click on the button must do the same thing, so the

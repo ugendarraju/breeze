@@ -48,7 +48,9 @@ export const registerPartnerSchema = z.object({
   name: z.string().min(1).max(255),
   acceptTerms: z.boolean().refine(val => val === true, {
     message: 'You must accept the terms of service'
-  })
+  }),
+  // fork: one-time technician invite (services/partnerSignupInvites.ts)
+  inviteToken: z.string().min(16).max(128).optional(),
 });
 
 // TOTP/SMS codes are 6 digits; recovery codes are `XXXX-XXXX` (8 [A-Z0-9]

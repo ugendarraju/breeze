@@ -73,6 +73,10 @@ configRoutes.get('/', (c) => {
     registration: {
       enabled: envFlag('ENABLE_REGISTRATION', false),
     },
+    // fork: signup needs a one-time invite link (services/partnerSignupInvites.ts)
+    signupInvites: {
+      inviteOnly: envFlag('PARTNER_SIGNUP_INVITE_ONLY', false),
+    },
     // Whether software package file uploads can succeed (S3 object storage
     // fully configured). The web uses this to gray out upload affordances up
     // front instead of letting the user pick a file and then hit the 503 the

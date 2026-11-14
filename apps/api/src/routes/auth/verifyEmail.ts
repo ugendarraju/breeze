@@ -67,6 +67,11 @@ import { installAuthBindingReplacement, requestAuthBinding } from './binding';
 import { isPgUniqueViolation } from '../../utils/pgErrors';
 import { partnerTrustMode } from '../../config/partnerTrustMode';
 import { enqueueIpClassify } from '../../services/ipClassify';
+import { attachInvitePartner, partnerSignupInviteOnly } from '../../services/partnerSignupInvites';
+
+// fork: banner for an invited technician waiting on the platform admin (AccountInactiveScreen).
+const INVITED_PARTNER_PENDING_MESSAGE =
+  'Thanks for signing up! Your account is waiting for approval from the platform administrator. You can sign in and start adding customers as soon as it is approved.';
 
 const { db, withSystemDbAccessContext } = dbModule;
 
@@ -439,9 +444,18 @@ async function createRegistrationAccount(
     adminName: rec.name,
     passwordHash: rec.passwordHash,
     origin: { mcp: false, ip: rec.signupIp, userAgent: rec.signupUserAgent },
-    status: rec.hostedExpectation ? 'pending' : 'active',
+    // fork: invited technicians always wait for the platform admin's approval.
+    status: rec.signupInviteId || rec.hostedExpectation ? 'pending' : 'active',
     purchaseSelection,
   }, { tx });
+  if (rec.signupInviteId) {
+    await tx
+      .update(partners)
+      .set({
+        settings: sql`COALESCE(${partners.settings}, '{}'::jsonb) || ${JSON.stringify({ statusMessage: INVITED_PARTNER_PENDING_MESSAGE })}::jsonb`,
+      })
+      .where(eq(partners.id, created.partnerId));
+  }
 
   const [partnerRow] = await tx
     .select({
@@ -600,7 +614,8 @@ async function finalizePendingRegistration(
   rec: PendingRegistration,
   tokenHash: string,
 ): Promise<Response> {
-  if (!ENABLE_REGISTRATION || isHosted() !== rec.hostedExpectation) {
+  // fork: a registration parked without an invite cannot finish once signup is invite-only.
+  if (!ENABLE_REGISTRATION || isHosted() !== rec.hostedExpectation || (partnerSignupInviteOnly() && !rec.signupInviteId)) {
     writeAuthAudit(c, {
       action: 'auth.email_verify_failed',
       result: 'failure',
@@ -667,6 +682,12 @@ async function finalizePendingRegistration(
   }
 
   const { facts } = committed;
+  if (rec.signupInviteId) {
+    // fork: link the invite to the partner it produced (shown on the admin's Partners page).
+    await attachInvitePartner(rec.signupInviteId, facts.created.partnerId).catch((err) => {
+      console.warn('[VerifyEmail] failed to link signup invite to partner:', err instanceof Error ? err.message : err);
+    });
+  }
   if (rec.signupIp && partnerTrustMode() !== 'off') {
     void enqueueIpClassify({
       kind: 'partner',
@@ -792,6 +813,8 @@ async function finalizePendingRegistration(
     // with no redirect. Recover selected intent only when the hook is unavailable.
     const redirectUrl = isSafeRelativeRedirect(hookResponse?.redirectUrl)
       ? hookResponse!.redirectUrl
+      : rec.signupInviteId
+        ? '/account/inactive' // fork: invited technicians wait for approval, not billing
       : rec.hostedExpectation && hookResponse == null
         ? '/billing/plans'
         : undefined;
