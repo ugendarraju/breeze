@@ -140,7 +140,30 @@ export function annotateSoftwareRow(
   return {
     updateAvailable: true,
     availableVersion: match.availableVersion,
-    updatePackageId: match.packageId,
+    // fork: winget ids are stored provider-prefixed ("winget:OBSProject.OBSStudio").
+    // Return the bare id so clients can send it to the `--id` path; other
+    // providers (e.g. "homebrew:cask:foo") keep their raw id.
+    updatePackageId: toWingetPackageId(match.packageId) ?? match.packageId,
     updateSource: match.source,
   };
+}
+
+/**
+ * fork: the winget identifier shape accepted by the API's software action
+ * payload and the agent's `validateSoftwarePackageID` (e.g. "Mozilla.Firefox").
+ */
+export const WINGET_PACKAGE_ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/;
+
+/**
+ * fork: turn a stored third-party patch package id into a bare winget id the
+ * agent can upgrade with `--id`. The agent reports winget ids prefixed with
+ * their provider ("winget:OBSProject.OBSStudio"); unprefixed ids from older
+ * rows pass through if they already have the winget shape. Any other provider
+ * prefix ("homebrew:", "chocolatey:") or an id the agent would reject returns null.
+ */
+export function toWingetPackageId(packageId: string | null | undefined): string | null {
+  if (!packageId) return null;
+  const trimmed = packageId.trim();
+  const bare = trimmed.toLowerCase().startsWith('winget:') ? trimmed.slice('winget:'.length) : trimmed;
+  return WINGET_PACKAGE_ID_RE.test(bare) ? bare : null;
 }

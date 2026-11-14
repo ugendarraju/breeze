@@ -2519,6 +2519,7 @@
     "reasons": {
       "appleManaged": "Le app firmate da Apple sono gestite da macOS — disinstallale tramite Impostazioni e aggiornate tramite Aggiornamento Software.",
       "noUpdate": "Nessun aggiornamento disponibile — questo pacchetto è aggiornato o non monitorato da un gestore di pacchetti.",
+      "noExactPackage": "Il pacchetto winget esatto per questo aggiornamento non è noto, quindi non può essere aggiornato in sicurezza. Esegui una scansione delle patch e riprova.",
       "unsupportedOs": "Le azioni software non sono supportate su {{os}}."
     },
     "searchPlaceholder": "Cerca per nome, editore, versione...",
@@ -2545,7 +2546,8 @@
       "clearSelection": "Cancella selezione",
       "updateSelected": "Aggiorna selezionati ({{count}})",
       "selectRow": "Seleziona {{name}}",
-      "queued": "{{queued}} di {{total}} aggiornamenti in coda"
+      "queued": "{{queued}} di {{total}} aggiornamenti in coda",
+      "skipped": "{{count}} saltati: pacchetto esatto sconosciuto"
     },
     "updatesAvailable_one": "{{count}} aggiornamento disponibile",
     "updatesAvailable_other": "{{count}} aggiornamenti disponibili"

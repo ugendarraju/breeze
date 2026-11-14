@@ -24,14 +24,14 @@ const FIXTURE = {
   ],
 };
 
-function setup(updateOk: (body: { name: string }) => boolean = () => true) {
+function setup(updateOk: (body: { name: string }) => boolean = () => true, fixture: unknown = FIXTURE) {
   fetchMock.mockImplementation(async (url: unknown, init?: unknown) => {
     const u = String(url);
     if (u.includes('/software/update')) {
       const body = JSON.parse(String((init as RequestInit).body)) as { name: string };
       return json(updateOk(body) ? { success: true } : { error: 'boom' }, updateOk(body));
     }
-    if (u.includes('/software')) return json(FIXTURE);
+    if (u.includes('/software')) return json(fixture);
     return json({});
   });
   render(<DeviceSoftwareInventory deviceId={deviceId} osType="windows" />);
@@ -94,6 +94,46 @@ describe('DeviceSoftwareInventory bulk updates (fork)', () => {
     await waitFor(() => expect(updatePosts()).toHaveLength(2));
     await waitFor(() =>
       expect(toastMock).toHaveBeenCalledWith(expect.objectContaining({ type: 'error', message: expect.stringMatching(/1 of 2/) })),
+    );
+  });
+
+  // fork: OBS Studio regression — a Windows update must carry the exact winget
+  // id; rows without one are disabled and skipped by bulk update.
+  const EXACT_FIXTURE = {
+    thirdPartyUpdatesManaged: false,
+    data: [
+      { id: 'sw-obs', name: 'OBS Studio', version: '32.0.1', publisher: 'OBS Project', updateAvailable: true, availableVersion: '33.0.0', updatePackageId: 'winget:OBSProject.OBSStudio' },
+      { id: 'sw-zoom', name: 'Zoom', version: '7.1', publisher: 'Zoom', updateAvailable: true, availableVersion: '7.2', updatePackageId: 'OBSolete+Id' },
+      { id: 'sw-mystery', name: 'Mystery App', version: '1.0', publisher: 'Acme', updateAvailable: true, availableVersion: '2.0', updatePackageId: null },
+    ],
+  };
+
+  it('sends the bare winget id even when the list carries the provider-prefixed form', async () => {
+    setup(() => true, EXACT_FIXTURE);
+    await screen.findByText('OBS Studio');
+    fireEvent.click(screen.getByTestId('software-select-sw-obs'));
+    fireEvent.click(screen.getByTestId('software-update-selected'));
+    await waitFor(() => expect(updatePosts()).toHaveLength(1));
+    expect(bodyOf(updatePosts()[0])).toEqual({ name: 'OBS Studio', packageId: 'OBSProject.OBSStudio' });
+  });
+
+  it('disables Update with a reason when the exact package is unknown, and bulk skips it with a count', async () => {
+    setup(() => true, EXACT_FIXTURE);
+    await screen.findByText('Mystery App');
+    expect(screen.queryByTestId('software-select-sw-mystery')).toBeNull();
+    expect(screen.queryByTestId('software-select-sw-zoom')).toBeNull();
+    const reason = /exact winget package for this update isn't known/;
+    const disabled = screen.getAllByTitle(reason);
+    expect(disabled).toHaveLength(2);
+    disabled.forEach((button) => expect((button as HTMLButtonElement).disabled).toBe(true));
+
+    fireEvent.click(screen.getByTestId('software-select-all-updates'));
+    fireEvent.click(screen.getByTestId('software-update-selected'));
+    await waitFor(() => expect(updatePosts()).toHaveLength(1));
+    await waitFor(() =>
+      expect(toastMock).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'success', message: expect.stringMatching(/2 skipped: exact package unknown/) }),
+      ),
     );
   });
 });

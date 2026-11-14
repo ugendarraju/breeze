@@ -2519,6 +2519,7 @@
     "reasons": {
       "appleManaged": "Apple-signed apps are managed by macOS — uninstall via Settings, update via Software Update.",
       "noUpdate": "No update available — this package is up to date or not tracked by a package manager.",
+      "noExactPackage": "The exact winget package for this update isn't known, so it can't be updated safely. Run a patch scan and try again.",
       "unsupportedOs": "Software actions are not supported on {{os}}."
     },
     "searchPlaceholder": "Search by name, publisher, version...",
@@ -2545,7 +2546,8 @@
       "clearSelection": "Clear selection",
       "updateSelected": "Update selected ({{count}})",
       "selectRow": "Select {{name}}",
-      "queued": "Queued {{queued}} of {{total}} updates"
+      "queued": "Queued {{queued}} of {{total}} updates",
+      "skipped": "{{count}} skipped: exact package unknown"
     },
     "updatesAvailable_one": "{{count}} update available",
     "updatesAvailable_other": "{{count}} updates available"

@@ -31,6 +31,11 @@ import { mfaGatedToolError } from './aiToolMfaGate';
 import { homebrewBootstrapPayload } from './homebrewBootstrap';
 import { escapeLikePattern } from './packageSearch';
 import { softwareActionPayloadSchema } from './softwareActionPayload';
+import {
+  applyWindowsUpdateTarget,
+  resolveWindowsUpdatePackageId,
+  windowsUpdateUnresolvedMessage,
+} from './softwareUpdateTarget';
 import { DEVICE_SOFTWARE_ACTIONS } from './aiToolSchemasSoftware';
 import { auditToolWrite, bounded, clampLimit, clampOffset, json, jsonError, notFound, thrown } from './aiToolsSoftwareShared';
 
@@ -148,7 +153,12 @@ export function registerDeviceSoftwareTools(aiTools: Map<string, AiTool>): void 
         // Same payload as the route (routes/devices/softwareActions.ts): packageId is forwarded only on Windows updates.
         const payload: Record<string, unknown> = { name: data.name, source: 'ai_tool' };
         if (data.version) payload.version = data.version;
-        if (action === 'update' && data.packageId && isWindows) payload.packageId = data.packageId;
+        // fork: Windows updates only dispatch for an exact winget id (services/softwareUpdateTarget.ts).
+        if (action === 'update' && isWindows) {
+          const resolved = await resolveWindowsUpdatePackageId(device.id, data.name, data.packageId);
+          if (!resolved) return jsonError(windowsUpdateUnresolvedMessage(data.name), 'VALIDATION_ERROR');
+          applyWindowsUpdateTarget(payload, data.name, resolved.packageId);
+        }
         const type = action === 'update' ? CommandTypes.SOFTWARE_UPDATE : CommandTypes.SOFTWARE_UNINSTALL;
         const command = await aiQueueCommand(auth, 'manage_device_software', device.id, type, payload, auth.user.id);
         auditToolWrite(auth, {

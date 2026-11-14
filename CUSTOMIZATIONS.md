@@ -94,3 +94,16 @@ Parked alternative: branch `feature/battery-health-agent` collects the same data
 | `apps/web/src/components/devices/WarrantyManualControls.tsx` (+ `.test.tsx`) | added: "Edit dates" + "Check on vendor site" (ASUS global, Acer, Microsoft, Dell service tag, HP, Lenovo) |
 | `apps/web/src/components/devices/DeviceWarrantyCard.tsx` | Renders `WarrantyManualControls` beside Refresh |
 | `apps/web/src/locales/*/devices.json` (8 files) | `deviceWarrantyCard.manual.*` |
+
+## Software tab: exact winget package for updates (fork)
+
+Windows `software_update` commands are only sent with an exact winget id (never a name-based guess, which matched the msstore listing for OBS Studio and failed under SYSTEM). The id also replaces the payload `name`, so the agent's `--name` retry can't drift to another source.
+
+| Path | Change |
+|---|---|
+| `apps/api/src/routes/devices/softwareUpdateMatch.ts` (+ `.test.ts`) | `toWingetPackageId` strips the stored `winget:` prefix; `updatePackageId` is now the bare id |
+| `apps/api/src/services/softwareUpdateTarget.ts` (+ `.test.ts`) | added: resolves the id (request, agent-reported patch, unique `winget_package_index` name+publisher hit) |
+| `apps/api/src/routes/devices/softwareActions.ts` (+ `.test.ts`) | Windows update resolves the id or returns 422 `PACKAGE_UNRESOLVED`; payload `name`/`packageId` = id, `displayName` = row name |
+| `apps/api/src/services/aiToolsDeviceSoftware.ts` (+ `aiToolsSoftwareDevice.handlers.test.ts`) | Same rule for `manage_device_software` |
+| `apps/web/src/components/devices/DeviceSoftwareInventory.tsx` (+ `.bulk.test.tsx`) | Sends the bare id; Windows Update disabled with a reason when the id is unknown; bulk summary counts skipped rows |
+| `apps/web/src/locales/*/devices.json` (8 files) | `deviceSoftwareInventory.reasons.noExactPackage`, `deviceSoftwareInventory.bulk.skipped` |

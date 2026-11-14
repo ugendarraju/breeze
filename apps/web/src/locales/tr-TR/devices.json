@@ -2519,6 +2519,7 @@
     "reasons": {
       "appleManaged": "Apple imzalı uygulamalar macOS tarafından yönetilmektedir; Ayarlar aracılığıyla kaldırın, Yazılım Güncelleme yoluyla güncelleyin.",
       "noUpdate": "Güncelleme mevcut değil — bu paket güncel veya bir paket yöneticisi tarafından izlenmiyor.",
+      "noExactPackage": "Bu güncelleme için tam winget paketi bilinmiyor, bu yüzden güvenli şekilde güncellenemez. Bir yama taraması çalıştırıp yeniden deneyin.",
       "unsupportedOs": "Yazılım eylemleri {{os}} üzerinde desteklenmez."
     },
     "searchPlaceholder": "Ada, yayıncıya, sürüme göre arayın...",
@@ -2545,7 +2546,8 @@
       "clearSelection": "Seçimi temizle",
       "updateSelected": "Seçilenleri güncelle ({{count}})",
       "selectRow": "{{name}} seç",
-      "queued": "{{total}} güncellemeden {{queued}} tanesi kuyruğa alındı"
+      "queued": "{{total}} güncellemeden {{queued}} tanesi kuyruğa alındı",
+      "skipped": "{{count}} atlandı: tam paket bilinmiyor"
     },
     "updatesAvailable_one": "{{count}} güncellemesi mevcut",
     "updatesAvailable_other": "{{count}} güncellemeler mevcut"

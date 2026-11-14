@@ -75,6 +75,13 @@ vi.mock('../../services/commandQueue', () => ({
   queueCommandForExecution: (...args: unknown[]) => queueCommandForExecutionMock(...args),
 }));
 
+const resolveWindowsUpdatePackageIdMock = vi.fn();
+
+vi.mock('../../services/softwareUpdateTarget', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../services/softwareUpdateTarget')>()),
+  resolveWindowsUpdatePackageId: (...args: unknown[]) => resolveWindowsUpdatePackageIdMock(...args),
+}));
+
 vi.mock('../../services/auditEvents', () => ({
   writeRouteAudit: vi.fn(),
 }));
@@ -92,6 +99,8 @@ describe('device software actions routes', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     queueCommandForExecutionMock.mockReset();
+    resolveWindowsUpdatePackageIdMock.mockReset();
+    resolveWindowsUpdatePackageIdMock.mockResolvedValue(null);
     app = new Hono();
     app.route('/devices', softwareActionsRoutes);
   });
@@ -133,6 +142,7 @@ describe('device software actions routes', () => {
     });
 
     it('passes version through to the agent payload on a Windows device', async () => {
+      resolveWindowsUpdatePackageIdMock.mockResolvedValue({ packageId: 'Google.Chrome', via: 'detected_update' });
       (getDeviceWithOrgCheck as ReturnType<typeof vi.fn>).mockResolvedValue({
         id: 'device-1',
         orgId: 'org-123',
@@ -155,12 +165,19 @@ describe('device software actions routes', () => {
       expect(queueCommandForExecutionMock).toHaveBeenCalledWith(
         'device-1',
         'software_update',
-        { name: 'Google Chrome', version: '125.0.6422.142', source: 'device_software_tab' },
+        {
+          name: 'Google.Chrome',
+          displayName: 'Google Chrome',
+          packageId: 'Google.Chrome',
+          version: '125.0.6422.142',
+          source: 'device_software_tab',
+        },
         expect.objectContaining({ userId: 'user-123' })
       );
     });
 
     it('passes a winget packageId through to the agent payload on Windows', async () => {
+      resolveWindowsUpdatePackageIdMock.mockResolvedValue({ packageId: 'Mozilla.Firefox', via: 'request' });
       (getDeviceWithOrgCheck as ReturnType<typeof vi.fn>).mockResolvedValue({
         id: 'device-1',
         orgId: 'org-123',
@@ -183,9 +200,62 @@ describe('device software actions routes', () => {
       expect(queueCommandForExecutionMock).toHaveBeenCalledWith(
         'device-1',
         'software_update',
-        { name: 'Mozilla Firefox', packageId: 'Mozilla.Firefox', source: 'device_software_tab' },
+        {
+          name: 'Mozilla.Firefox',
+          displayName: 'Mozilla Firefox',
+          packageId: 'Mozilla.Firefox',
+          source: 'device_software_tab',
+        },
         expect.objectContaining({ userId: 'user-123' })
       );
+    });
+
+    // fork: the OBS Studio regression — a name-only Windows update must be
+    // pinned to the winget id the agent reported, never sent by name.
+    it('resolves the exact winget id server-side when the client sends a name only', async () => {
+      (getDeviceWithOrgCheck as ReturnType<typeof vi.fn>).mockResolvedValue({
+        id: 'device-1', orgId: 'org-123', siteId: null, hostname: 'host-1', status: 'online', osType: 'windows',
+      });
+      resolveWindowsUpdatePackageIdMock.mockResolvedValue({ packageId: 'OBSProject.OBSStudio', via: 'detected_update' });
+      queueCommandForExecutionMock.mockResolvedValue({ command: { id: 'cmd-obs', status: 'pending' } });
+
+      const res = await app.request('/devices/device-1/software/update', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: 'OBS Studio' }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(resolveWindowsUpdatePackageIdMock).toHaveBeenCalledWith('device-1', 'OBS Studio', undefined);
+      expect(queueCommandForExecutionMock).toHaveBeenCalledWith(
+        'device-1',
+        'software_update',
+        {
+          name: 'OBSProject.OBSStudio',
+          displayName: 'OBS Studio',
+          packageId: 'OBSProject.OBSStudio',
+          source: 'device_software_tab',
+        },
+        expect.objectContaining({ userId: 'user-123' })
+      );
+    });
+
+    it('refuses a Windows update when no exact winget package can be determined', async () => {
+      (getDeviceWithOrgCheck as ReturnType<typeof vi.fn>).mockResolvedValue({
+        id: 'device-1', orgId: 'org-123', siteId: null, hostname: 'host-1', status: 'online', osType: 'windows',
+      });
+
+      const res = await app.request('/devices/device-1/software/update', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: 'OBS Studio' }),
+      });
+
+      expect(res.status).toBe(422);
+      const body = await res.json();
+      expect(body.code).toBe('PACKAGE_UNRESOLVED');
+      expect(body.error).toContain('exact winget package');
+      expect(queueCommandForExecutionMock).not.toHaveBeenCalled();
     });
 
     it('does not forward packageId on a non-Windows device', async () => {

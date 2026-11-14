@@ -136,7 +136,7 @@ describe('manage_device_software', () => {
     expect(h.queue).not.toHaveBeenCalled();
 
     h.verify.mockResolvedValue(device());
-    const agentOut = await run('manage_device_software', { action: 'update', deviceId: DEV, name: 'Firefox' }, agentNoMfa());
+    const agentOut = await run('manage_device_software', { action: 'update', deviceId: DEV, name: 'Firefox', packageId: 'Mozilla.Firefox' }, agentNoMfa());
     expect(agentOut).toMatchObject({ queued: true, commandId: 'cmd-1' });
   });
 
@@ -151,7 +151,27 @@ describe('manage_device_software', () => {
     h.verify.mockResolvedValue(device());
     await run('manage_device_software', { action: 'update', deviceId: DEV, name: 'Firefox', version: '120.0', packageId: 'Mozilla.Firefox' });
     expect(h.queue).toHaveBeenCalledWith(expect.anything(), 'manage_device_software', DEV, 'software_update',
-      { name: 'Firefox', source: 'ai_tool', version: '120.0', packageId: 'Mozilla.Firefox' }, 'user-1');
+      { name: 'Mozilla.Firefox', displayName: 'Firefox', source: 'ai_tool', version: '120.0', packageId: 'Mozilla.Firefox' }, 'user-1');
+  });
+
+  // fork: a Windows update without a resolvable exact winget id is refused, never sent by name.
+  it('a Windows update with no resolvable winget id is a validation error and queues nothing', async () => {
+    h.verify.mockResolvedValue(device());
+    h.select.mockImplementation(() => chain([]));
+    const out = await run('manage_device_software', { action: 'update', deviceId: DEV, name: 'OBS Studio' });
+    expect(out.code).toBe('VALIDATION_ERROR');
+    expect(String(out.error)).toContain('exact winget package');
+    expect(h.queue).not.toHaveBeenCalled();
+  });
+
+  it('a Windows update resolves the winget id the agent reported for the package', async () => {
+    h.verify.mockResolvedValue(device());
+    h.select.mockImplementationOnce(() =>
+      chain([{ title: 'OBS Studio', packageId: 'winget:OBSProject.OBSStudio', version: '33.0.0', source: 'third_party' }]));
+    await run('manage_device_software', { action: 'update', deviceId: DEV, name: 'OBS Studio' });
+    expect(h.queue.mock.calls[0]![4]).toEqual({
+      name: 'OBSProject.OBSStudio', displayName: 'OBS Studio', packageId: 'OBSProject.OBSStudio', source: 'ai_tool',
+    });
   });
 
   it('a non-Windows update never forwards packageId', async () => {
@@ -178,7 +198,7 @@ describe('manage_device_software', () => {
   it('a remote-tools policy denial is POLICY_DENIED and writes no audit row', async () => {
     h.verify.mockResolvedValue(device());
     h.queue.mockRejectedValue(new RemoteToolsDisabledByPolicyError(DEV, 'software_update', 'AI remote tools are disabled'));
-    const out = await run('manage_device_software', { action: 'update', deviceId: DEV, name: 'Firefox' });
+    const out = await run('manage_device_software', { action: 'update', deviceId: DEV, name: 'Firefox', packageId: 'Mozilla.Firefox' });
     expect(out.code).toBe('POLICY_DENIED');
     expect(h.auditAsync).not.toHaveBeenCalled();
   });

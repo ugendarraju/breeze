@@ -2519,6 +2519,7 @@
     "reasons": {
       "appleManaged": "Os aplicativos assinados pela Apple são gerenciados pelo macOS — desinstale em Ajustes e atualize pela Atualização de Software.",
       "noUpdate": "Nenhuma atualização disponível — este pacote está atualizado ou não é monitorado por um gerenciador de pacotes.",
+      "noExactPackage": "O pacote winget exato desta atualização é desconhecido, então ela não pode ser feita com segurança. Execute uma verificação de patches e tente novamente.",
       "unsupportedOs": "As ações de software não são compatíveis com {{os}}."
     },
     "searchPlaceholder": "Pesquisar por nome, fornecedor, versão...",
@@ -2545,7 +2546,8 @@
       "clearSelection": "Limpar seleção",
       "updateSelected": "Atualizar selecionados ({{count}})",
       "selectRow": "Selecionar {{name}}",
-      "queued": "{{queued}} de {{total}} atualizações na fila"
+      "queued": "{{queued}} de {{total}} atualizações na fila",
+      "skipped": "{{count}} ignoradas: pacote exato desconhecido"
     },
     "updatesAvailable_one": "{{count}} atualização disponível",
     "updatesAvailable_other": "{{count}} atualizações disponíveis"

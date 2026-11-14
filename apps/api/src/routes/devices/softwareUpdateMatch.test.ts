@@ -87,6 +87,18 @@ describe('annotateSoftwareRow', () => {
     });
   });
 
+  // fork: the agent stores winget ids provider-prefixed; clients need the bare id.
+  it('returns the bare winget id for a provider-prefixed package id', () => {
+    const prefixed = buildUpdateIndex([patch('OBS Studio', '33.0.0', 'winget:OBSProject.OBSStudio')]);
+    const result = annotateSoftwareRow({ name: 'OBS Studio', version: '32.0.1' }, prefixed);
+    expect(result.updatePackageId).toBe('OBSProject.OBSStudio');
+  });
+
+  it('keeps a non-winget provider id as-is', () => {
+    const brew = buildUpdateIndex([patch('Firefox', '131.0', 'homebrew:cask:firefox')]);
+    expect(annotateSoftwareRow({ name: 'Firefox', version: '130.0' }, brew).updatePackageId).toBe('homebrew:cask:firefox');
+  });
+
   it('returns no-update for a row with no matching update', () => {
     const result = annotateSoftwareRow({ name: 'Some Random App', version: '1.0' }, index);
     expect(result.updateAvailable).toBe(false);

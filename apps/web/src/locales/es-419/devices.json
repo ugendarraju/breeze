@@ -2519,6 +2519,7 @@
     "reasons": {
       "appleManaged": "Las aplicaciones firmadas por Apple se administran mediante macOS: desinstálelas desde Configuración y actualícelas mediante Actualización de software.",
       "noUpdate": "No hay actualización disponible: este paquete está actualizado o no es rastreado por un administrador de paquetes.",
+      "noExactPackage": "No se conoce el paquete winget exacto de esta actualización, por lo que no se puede actualizar de forma segura. Ejecute un análisis de parches e inténtelo de nuevo.",
       "unsupportedOs": "Las acciones de software no son compatibles con {{os}}."
     },
     "searchPlaceholder": "Buscar por nombre, editor o versión...",
@@ -2545,7 +2546,8 @@
       "clearSelection": "Borrar selección",
       "updateSelected": "Actualizar seleccionados ({{count}})",
       "selectRow": "Seleccionar {{name}}",
-      "queued": "{{queued}} de {{total}} actualizaciones en cola"
+      "queued": "{{queued}} de {{total}} actualizaciones en cola",
+      "skipped": "{{count}} omitidas: paquete exacto desconocido"
     },
     "updatesAvailable_one": "Actualización {{count}} disponible",
     "updatesAvailable_other": "{{count}} actualizaciones disponibles"

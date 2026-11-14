@@ -2519,6 +2519,7 @@
     "reasons": {
       "appleManaged": "Von Apple signierte Apps werden von macOS verwaltet – Deinstallation über Einstellungen, Aktualisierung über Software-Update.",
       "noUpdate": "Kein Update verfügbar – dieses Paket ist aktuell oder wird nicht von einem Paketmanager verfolgt.",
+      "noExactPackage": "Das genaue winget-Paket für dieses Update ist unbekannt, daher kann es nicht sicher aktualisiert werden. Führen Sie einen Patch-Scan aus und versuchen Sie es erneut.",
       "unsupportedOs": "Softwareaktionen werden auf {{os}} nicht unterstützt."
     },
     "searchPlaceholder": "Nach Name, Hersteller oder Version suchen...",
@@ -2545,7 +2546,8 @@
       "clearSelection": "Auswahl aufheben",
       "updateSelected": "Ausgewählte aktualisieren ({{count}})",
       "selectRow": "{{name}} auswählen",
-      "queued": "{{queued}} von {{total}} Updates eingereiht"
+      "queued": "{{queued}} von {{total}} Updates eingereiht",
+      "skipped": "{{count}} übersprungen: genaues Paket unbekannt"
     },
     "updatesAvailable_one": "{{count}} Update verfügbar",
     "updatesAvailable_other": "{{count}} Updates verfügbar"

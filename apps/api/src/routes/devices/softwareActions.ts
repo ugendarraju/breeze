@@ -7,6 +7,11 @@ import { CommandTypes, queueCommandForExecution } from '../../services/commandQu
 import { writeRouteAudit } from '../../services/auditEvents';
 import { commandAuditDetails } from '../../services/commandAudit';
 import { softwareActionPayloadSchema } from '../../services/softwareActionPayload';
+import {
+  applyWindowsUpdateTarget,
+  resolveWindowsUpdatePackageId,
+  windowsUpdateUnresolvedMessage,
+} from '../../services/softwareUpdateTarget';
 
 export const softwareActionsRoutes = new Hono();
 
@@ -54,7 +59,15 @@ softwareActionsRoutes.post(
     // Linux agent paths (which upgrade by name). Forward it only on Windows so a
     // stray id can never reach a non-winget package manager — consistent with the
     // Windows-only version-pin gate above.
-    if (data.packageId && device.osType === 'windows') payload.packageId = data.packageId;
+    // fork: on Windows an update is only dispatched for an exact winget id (see
+    // services/softwareUpdateTarget.ts) — never a name-based guess.
+    if (device.osType === 'windows') {
+      const resolved = await resolveWindowsUpdatePackageId(deviceId, data.name, data.packageId);
+      if (!resolved) {
+        return c.json({ error: windowsUpdateUnresolvedMessage(data.name), code: 'PACKAGE_UNRESOLVED' }, 422);
+      }
+      applyWindowsUpdateTarget(payload, data.name, resolved.packageId);
+    }
 
     const queued = await queueCommandForExecution(deviceId, CommandTypes.SOFTWARE_UPDATE, payload, {
       userId: auth.user.id,

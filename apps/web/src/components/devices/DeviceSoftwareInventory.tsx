@@ -21,6 +21,15 @@ import { showToast } from '../shared/Toast';
 // correlated update's packageId can be sent to the winget-only `--id` path.
 const WINGET_PACKAGE_ID = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
 
+// fork: the exact winget id for a row's detected update, or null. The API
+// returns bare ids; older API builds sent the stored "winget:<Id>" form, so
+// unwrap that too. Any other provider id (e.g. "homebrew:cask:foo") is null.
+function wingetIdFor(packageId: string | null | undefined): string | null {
+  if (!packageId) return null;
+  const bare = packageId.toLowerCase().startsWith('winget:') ? packageId.slice('winget:'.length) : packageId;
+  return WINGET_PACKAGE_ID.test(bare) ? bare : null;
+}
+
 function isApplePublisher(publisher: string): boolean {
   const p = publisher.toLowerCase();
   return p === 'apple' || p === 'apple inc.' || p === 'apple inc' || p === 'com.apple' || p.startsWith('com.apple.');
@@ -77,8 +86,11 @@ function actionsAreSupported(
   osType: string | undefined,
   isApple: boolean,
   updateAvailable: boolean,
+  // fork: Windows updates go out only with an exact winget id (never by name).
+  hasExactPackage: boolean,
   labels: {
     noUpdateReason: string;
+    noExactPackageReason: string;
     appleReason: string;
     unsupportedOsReason: (os: string) => string;
   }
@@ -96,6 +108,12 @@ function actionsAreSupported(
     }
     return {
       update: updateAvailable ? { allowed: true } : { allowed: false, reason: noUpdateReason },
+      uninstall: { allowed: true },
+    };
+  }
+  if (os === 'windows' && updateAvailable && !hasExactPackage) {
+    return {
+      update: { allowed: false, reason: labels.noExactPackageReason },
       uninstall: { allowed: true },
     };
   }
@@ -209,9 +227,8 @@ export default function DeviceSoftwareInventory({ deviceId, timezone, osType }: 
       // rejects — those fall back to a name-based upgrade (which brew uses anyway).
       const body: Record<string, string> = { name };
       if (action === 'update') {
-        if (opts?.packageId && WINGET_PACKAGE_ID.test(opts.packageId)) {
-          body.packageId = opts.packageId;
-        }
+        const packageId = wingetIdFor(opts?.packageId);
+        if (packageId) body.packageId = packageId;
       } else if (version) {
         body.version = version;
       }
@@ -264,6 +281,7 @@ export default function DeviceSoftwareInventory({ deviceId, timezone, osType }: 
       const publisher = item.publisher ?? item.vendor ?? '-';
       const isApple = isApplePublisher(publisher);
       const updateAvailable = item.updateAvailable === true;
+      const exactPackageId = wingetIdFor(item.updatePackageId);
       return {
         id: item.id ?? `${item.name ?? item.title ?? 'software'}-${index}`,
         name: item.name ?? item.title ?? t('deviceSoftwareInventory.unknownSoftware'),
@@ -273,10 +291,11 @@ export default function DeviceSoftwareInventory({ deviceId, timezone, osType }: 
         isApple,
         updateAvailable,
         availableVersion: item.availableVersion ?? null,
-        updatePackageId: item.updatePackageId ?? null,
+        updatePackageId: exactPackageId ?? item.updatePackageId ?? null,
         installDate: formatDate(item.installDate ?? item.installedAt ?? item.install_date, effectiveTimezone),
-        capabilities: actionsAreSupported(osType, isApple, updateAvailable, {
+        capabilities: actionsAreSupported(osType, isApple, updateAvailable, exactPackageId !== null, {
           noUpdateReason: t('deviceSoftwareInventory.reasons.noUpdate'),
+          noExactPackageReason: t('deviceSoftwareInventory.reasons.noExactPackage'),
           appleReason: t('deviceSoftwareInventory.reasons.appleManaged'),
           unsupportedOsReason: (os) => t('deviceSoftwareInventory.reasons.unsupportedOs', { os }),
         }),
@@ -329,6 +348,12 @@ export default function DeviceSoftwareInventory({ deviceId, timezone, osType }: 
       return next;
     });
   };
+  // fork: rows with a detected update that bulk update leaves out because the
+  // exact package isn't known (reported in the bulk summary).
+  const skippedNoPackageCount = useMemo(
+    () => rows.filter((r) => r.updateAvailable && !r.capabilities.update.allowed && !r.isApple).length,
+    [rows],
+  );
   const allUpdatableSelected = updatableIds.size > 0 && selectedUpdatable.length === updatableIds.size;
   const toggleSelectAllUpdatable = () => {
     setSelected(allUpdatableSelected ? new Set() : new Set(updatableIds));
@@ -350,9 +375,12 @@ export default function DeviceSoftwareInventory({ deviceId, timezone, osType }: 
     }
     setBulkRunning(false);
     setSelected(new Set());
+    const summary = t('deviceSoftwareInventory.bulk.queued', { queued, total: targets.length });
     showToast({
       type: queued === targets.length ? 'success' : 'error',
-      message: t('deviceSoftwareInventory.bulk.queued', { queued, total: targets.length }),
+      message: skippedNoPackageCount > 0
+        ? `${summary} · ${t('deviceSoftwareInventory.bulk.skipped', { count: skippedNoPackageCount })}`
+        : summary,
     });
   };
 

@@ -2519,6 +2519,7 @@
     "reasons": {
       "appleManaged": "Apple Les applications signées sont gérées par macOS — désinstaller via Paramètres, mettre à jour via Mise à jour logicielle.",
       "noUpdate": "Aucune mise à jour disponible — ce paquet est à jour ou non suivi par un gestionnaire de paquets.",
+      "noExactPackage": "Le paquet winget exact de cette mise à jour est inconnu; la mise à jour ne peut donc pas être faite en toute sécurité. Lancez une analyse des correctifs et réessayez.",
       "unsupportedOs": "Les actions logicielles ne sont pas prises en charge sur {{os}}."
     },
     "searchPlaceholder": "Rechercher par nom, éditeur ou version...",
@@ -2545,7 +2546,8 @@
       "clearSelection": "Effacer la sélection",
       "updateSelected": "Mettre à jour la sélection ({{count}})",
       "selectRow": "Sélectionner {{name}}",
-      "queued": "{{queued}} sur {{total}} mises à jour en file"
+      "queued": "{{queued}} sur {{total}} mises à jour en file",
+      "skipped": "{{count}} ignorées : paquet exact inconnu"
     },
     "updatesAvailable_one": "mise à jour {{count}} disponible",
     "updatesAvailable_other": "{{count}} mises à jour disponibles"
