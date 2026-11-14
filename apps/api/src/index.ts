@@ -223,6 +223,7 @@ import { remediationSuggestionRoutes } from './routes/remediationSuggestions';
 import { fixMemoryRoutes } from './routes/fixMemory';
 import { seedBuiltInPlaybooks } from './services/builtInPlaybooks';
 import { ensureSystemLibraryScripts } from './services/systemScriptLibrary';
+import { startBatteryHealthProvisioning } from './services/batteryHealthProvisioning'; // fork
 import { runLegacyAlertingRetirement, LEGACY_ALERTING_RETRY_DELAYS_MS } from './services/monitors/conversion/retirementSweep';
 import { ensureBuiltInMonitorsForAllPartners } from './services/monitors/builtInMonitors';
 import { refreshPinnedBuiltinPackages } from './services/builtinDeploymentPackages';
@@ -1916,6 +1917,7 @@ async function bootstrap(): Promise<void> {
   } catch (err) {
     console.error('[startup] Failed to ensure system script library:', err);
   }
+  startBatteryHealthProvisioning(); // fork: battery-health fields + daily automation per partner
 
 
   try {
