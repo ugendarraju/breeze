@@ -12,7 +12,10 @@ vi.mock('../../stores/auth', () => ({
           : {
               cpuModel: 'CPU model',
               networkAdapters: [],
-              disks: [{ name: 'C:', sizeGb: 200, usedGb: 150, health: 'healthy' }],
+              disks: [
+                { name: 'C:', sizeGb: 200, usedGb: 150, health: 'healthy' },
+                { name: 'D:', sizeGb: 174.2, usedGb: 163.3, usedPercent: 93.71386, health: 'healthy' },
+              ],
             },
       ),
       { status: 200 },
@@ -24,4 +27,10 @@ it('renders the used percentage in the disk table (#9610)', async () => {
   render(<DeviceHardwareInventory deviceId="22222222-2222-4222-8222-222222222222" />);
   expect(await screen.findByText('75%')).toBeInTheDocument();
   expect(screen.getByRole('columnheader', { name: /used %/i })).toBeInTheDocument();
+});
+
+it('rounds an agent-reported fractional percentage to one decimal', async () => {
+  render(<DeviceHardwareInventory deviceId="22222222-2222-4222-8222-222222222222" />);
+  expect(await screen.findByText('93.7%')).toBeInTheDocument();
+  expect(screen.queryByText('93.71386%')).not.toBeInTheDocument();
 });

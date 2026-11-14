@@ -173,11 +173,14 @@ export default function PartnersAdmin() {
   }
   if (loadState === 'unauthorized') {
     return (
-      <div className="rounded-lg border bg-card p-6" data-testid="partners-admin-requires-operator">
-        <p className="font-medium">Sign in with the platform operator account</p>
-        <p className="mt-1 text-sm text-muted-foreground">
-          The partner directory needs a system-scope platform admin: an account with no partner or organization membership.
-        </p>
+      <div className="space-y-6">
+        <h1 className="text-2xl font-semibold tracking-tight">Partners</h1>
+        <div className="rounded-lg border bg-card p-6" data-testid="partners-admin-requires-operator">
+          <p className="font-medium">Sign in with the platform operator account</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            The partner directory needs a system-scope platform admin: an account with no partner or organization membership.
+          </p>
+        </div>
       </div>
     );
   }

@@ -244,7 +244,7 @@ export default function DeviceHardwareInventory({
             : t("deviceHardwareInventory.notReported"),
         percentLabel:
           computedPercent !== null
-            ? `${computedPercent}%`
+            ? `${Math.round(computedPercent * 10) / 10}%`
             : t("deviceHardwareInventory.notReported"),
         health: getHealthBadge(disk.health, disk.status),
       };
