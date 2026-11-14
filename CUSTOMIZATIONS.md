@@ -27,3 +27,11 @@ Every upstream file we modify gets a row below, so merge conflicts have a checkl
 ## Operational notes (not in git)
 
 - The partner directory needs a **system-scope platform admin**: `is_platform_admin = true` and **no** `partner_users` / `organization_users` rows. Breeze has no UI to create one; it is inserted with SQL. A partner-member platform admin (e.g. `admin@breeze.local`) gets a 403 there by design.
+
+## Software tab: updates filter + bulk update (fork)
+
+| Path | Change |
+|---|---|
+| `apps/web/src/components/devices/DeviceSoftwareInventory.tsx` | "Updates only" toggle, row checkboxes on updatable rows, "Select all with updates", "Update selected (N)" (sequential, one summary toast); `queueSoftwareAction` gains `quiet` and returns success |
+| `apps/web/src/components/devices/DeviceSoftwareInventory.bulk.test.tsx` | added: tests for the above |
+| `apps/web/src/locales/*/devices.json` (8 files) | `deviceSoftwareInventory.bulk.*` |

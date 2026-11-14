@@ -145,6 +145,10 @@ export default function DeviceSoftwareInventory({ deviceId, timezone, osType }: 
   // queues directly, since the worst case is a silent no-op when the package
   // is already current.
   const [confirmState, setConfirmState] = useState<ConfirmState | null>(null);
+  // fork: "Updates only" filter + bulk update
+  const [updatesOnly, setUpdatesOnly] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkRunning, setBulkRunning] = useState(false);
   const pageSize = 25;
 
   // Use provided timezone, fetched siteTimezone, or browser default
@@ -191,8 +195,9 @@ export default function DeviceSoftwareInventory({ deviceId, timezone, osType }: 
       action: SoftwareAction,
       name: string,
       version: string,
-      opts?: { packageId?: string | null; availableVersion?: string | null }
-    ) => {
+      // fork: `quiet` skips the per-item success toast (bulk update shows one summary).
+      opts?: { packageId?: string | null; availableVersion?: string | null; quiet?: boolean }
+    ): Promise<boolean> => {
       setPendingActions((prev) => ({ ...prev, [rowId]: action }));
       const verb = action === 'update'
         ? t('deviceSoftwareInventory.actions.update')
@@ -222,15 +227,17 @@ export default function DeviceSoftwareInventory({ deviceId, timezone, osType }: 
               body: JSON.stringify(body),
             }),
           errorFallback: t('deviceSoftwareInventory.toasts.couldNotQueue', { action: verb }),
-          successMessage,
+          successMessage: opts?.quiet ? undefined : successMessage,
         });
+        return true;
       } catch (err) {
         if (err instanceof ActionError && err.status === 401) {
-          return;
+          return false;
         }
         if (!(err instanceof ActionError)) {
           showToast({ message: t('deviceSoftwareInventory.toasts.couldNotQueue', { action: verb }), type: 'error' });
         }
+        return false;
       } finally {
         setPendingActions((prev) => {
           const next = { ...prev };
@@ -279,6 +286,9 @@ export default function DeviceSoftwareInventory({ deviceId, timezone, osType }: 
 
   const filteredRows = useMemo(() => {
     return rows.filter(item => {
+      // fork: "Updates only" toggle
+      if (updatesOnly && !item.updateAvailable) return false;
+
       // Type filter (Apple vs Third Party)
       if (typeFilter === 'apple' && !item.isApple) return false;
       if (typeFilter === 'third-party' && item.isApple) return false;
@@ -300,7 +310,51 @@ export default function DeviceSoftwareInventory({ deviceId, timezone, osType }: 
 
       return true;
     });
-  }, [rows, debouncedSearch, publisherFilter, typeFilter]);
+  }, [rows, debouncedSearch, publisherFilter, typeFilter, updatesOnly]);
+
+  // fork: bulk update. Only rows whose Update button is enabled can be selected.
+  const updatableIds = useMemo(
+    () => new Set(rows.filter((r) => r.capabilities.update.allowed).map((r) => r.id)),
+    [rows],
+  );
+  const selectedUpdatable = useMemo(
+    () => rows.filter((r) => selected.has(r.id) && updatableIds.has(r.id)),
+    [rows, selected, updatableIds],
+  );
+  const toggleSelected = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+  const allUpdatableSelected = updatableIds.size > 0 && selectedUpdatable.length === updatableIds.size;
+  const toggleSelectAllUpdatable = () => {
+    setSelected(allUpdatableSelected ? new Set() : new Set(updatableIds));
+  };
+  const updateSelected = async () => {
+    const targets = selectedUpdatable;
+    if (targets.length === 0 || bulkRunning) return;
+    setBulkRunning(true);
+    let queued = 0;
+    // One at a time: each queues a command on the device; firing 18 at once
+    // would flood the agent's command queue and the API rate limits.
+    for (const row of targets) {
+      const ok = await queueSoftwareAction(row.id, 'update', row.name, row.rawVersion, {
+        packageId: row.updatePackageId,
+        availableVersion: row.availableVersion,
+        quiet: true,
+      });
+      if (ok) queued += 1;
+    }
+    setBulkRunning(false);
+    setSelected(new Set());
+    showToast({
+      type: queued === targets.length ? 'success' : 'error',
+      message: t('deviceSoftwareInventory.bulk.queued', { queued, total: targets.length }),
+    });
+  };
 
   const totalPages = Math.ceil(filteredRows.length / pageSize);
   const startIndex = (currentPage - 1) * pageSize;
@@ -311,11 +365,12 @@ export default function DeviceSoftwareInventory({ deviceId, timezone, osType }: 
     setDebouncedSearch('');
     setPublisherFilter('all');
     setTypeFilter('all');
+    setUpdatesOnly(false); // fork
     setCurrentPage(1);
   };
 
   const isMac = osType?.toLowerCase() === 'macos' || osType?.toLowerCase() === 'darwin';
-  const hasActiveFilters = search || publisherFilter !== 'all' || typeFilter !== 'all';
+  const hasActiveFilters = search || publisherFilter !== 'all' || typeFilter !== 'all' || updatesOnly;
   const updatesAvailableCount = useMemo(
     () => rows.filter((r) => r.updateAvailable).length,
     [rows]
@@ -457,6 +512,44 @@ export default function DeviceSoftwareInventory({ deviceId, timezone, osType }: 
               </span>
             )}
           </div>
+          {/* fork: updates-only filter and bulk update */}
+          <div className="ml-auto flex shrink-0 flex-wrap items-center gap-2">
+            <button
+              type="button"
+              data-testid="software-updates-only"
+              aria-pressed={updatesOnly}
+              onClick={() => { setUpdatesOnly((v) => !v); setCurrentPage(1); }}
+              className={`rounded-md border px-2.5 py-1 text-xs font-medium ${
+                updatesOnly ? 'border-emerald-600 bg-emerald-600 text-white' : 'bg-background hover:bg-muted'
+              }`}
+            >
+              {t('deviceSoftwareInventory.bulk.updatesOnly')}
+            </button>
+            {updatableIds.size > 0 && (
+              <button
+                type="button"
+                data-testid="software-select-all-updates"
+                onClick={toggleSelectAllUpdatable}
+                className="rounded-md border bg-background px-2.5 py-1 text-xs font-medium hover:bg-muted"
+              >
+                {allUpdatableSelected
+                  ? t('deviceSoftwareInventory.bulk.clearSelection')
+                  : t('deviceSoftwareInventory.bulk.selectAll', { count: updatableIds.size })}
+              </button>
+            )}
+            {selectedUpdatable.length > 0 && (
+              <button
+                type="button"
+                data-testid="software-update-selected"
+                disabled={bulkRunning}
+                onClick={() => void updateSelected()}
+                className="inline-flex items-center gap-1 rounded-md bg-emerald-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
+              >
+                {bulkRunning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowUpCircle className="h-3.5 w-3.5" />}
+                {t('deviceSoftwareInventory.bulk.updateSelected', { count: selectedUpdatable.length })}
+              </button>
+            )}
+          </div>
         </div>
       )}
 
@@ -466,6 +559,18 @@ export default function DeviceSoftwareInventory({ deviceId, timezone, osType }: 
           <table className="min-w-full divide-y">
             <thead className="bg-muted/40 sticky top-0">
               <tr className="text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                {/* fork: select all rows that have an update */}
+                <th className="w-10 px-4 py-3">
+                  {updatableIds.size > 0 && (
+                    <input
+                      type="checkbox"
+                      data-testid="software-select-all-checkbox"
+                      aria-label={t('deviceSoftwareInventory.bulk.selectAll', { count: updatableIds.size })}
+                      checked={allUpdatableSelected}
+                      onChange={toggleSelectAllUpdatable}
+                    />
+                  )}
+                </th>
                 <th className="px-4 py-3">{t('deviceSoftwareInventory.table.name')}</th>
                 <th className="px-4 py-3">{t('deviceSoftwareInventory.table.version')}</th>
                 <th className="px-4 py-3">{t('deviceSoftwareInventory.table.publisher')}</th>
@@ -476,7 +581,7 @@ export default function DeviceSoftwareInventory({ deviceId, timezone, osType }: 
             <tbody className="divide-y">
               {paginatedRows.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-4 py-6 text-center text-sm text-muted-foreground">
+                  <td colSpan={6} className="px-4 py-6 text-center text-sm text-muted-foreground">
                     {hasActiveFilters
                       ? t('deviceSoftwareInventory.emptyFiltered')
                       : t('deviceSoftwareInventory.empty')}
@@ -490,6 +595,17 @@ export default function DeviceSoftwareInventory({ deviceId, timezone, osType }: 
                   const anyPending = pendingAction !== undefined;
                   return (
                     <tr key={item.id} className="text-sm hover:bg-muted/30">
+                      <td className="w-10 px-4 py-3">
+                        {updatableIds.has(item.id) && (
+                          <input
+                            type="checkbox"
+                            data-testid={`software-select-${item.id}`}
+                            aria-label={t('deviceSoftwareInventory.bulk.selectRow', { name: item.name })}
+                            checked={selected.has(item.id)}
+                            onChange={() => toggleSelected(item.id)}
+                          />
+                        )}
+                      </td>
                       <td className="px-4 py-3 font-medium">
                         <span className="flex items-center gap-2">
                           {item.isApple ? (

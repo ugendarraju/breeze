@@ -2535,6 +2535,14 @@
     "unknownSoftware": "Software desconocido",
     "updateTitle": "Actualizar título",
     "updatesAvailable": "{{count}} actualizaciones disponibles",
+    "bulk": {
+      "updatesOnly": "Solo actualizaciones",
+      "selectAll": "Seleccionar todo con actualizaciones ({{count}})",
+      "clearSelection": "Borrar selección",
+      "updateSelected": "Actualizar seleccionados ({{count}})",
+      "selectRow": "Seleccionar {{name}}",
+      "queued": "{{queued}} de {{total}} actualizaciones en cola"
+    },
     "updatesAvailable_one": "Actualización {{count}} disponible",
     "updatesAvailable_other": "{{count}} actualizaciones disponibles"
   },
