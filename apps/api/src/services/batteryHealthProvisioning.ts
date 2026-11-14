@@ -48,38 +48,42 @@ export async function provisionBatteryHealthForAllPartners(): Promise<{ partners
   const redis = getRedis();
   if (!redis) return result; // without the memory of who is done, do nothing
   const done = new Set(await redis.smembers(PROVISIONED_SET_KEY));
-  const newlyDone: string[] = [];
-  await withSystemDbAccessContext(() =>
-    db.transaction(async (tx) => {
-      const [{ locked }] = (await tx.execute(
-        sql`SELECT pg_try_advisory_xact_lock(hashtext('fork:battery-health-provisioning')) AS locked`,
-      )) as unknown as Array<{ locked: boolean }>;
-      if (!locked) return;
 
-      const systemScripts = await tx
-        .select({ id: scripts.id, name: scripts.name })
-        .from(scripts)
-        .where(and(
-          inArray(scripts.name, BATTERY_HEALTH_SCRIPTS_BY_OS.map((s) => s.script.name)),
-          eq(scripts.isSystem, true),
-          isNull(scripts.deletedAt),
-        ));
-      const scriptIdByOs = BATTERY_HEALTH_SCRIPTS_BY_OS.flatMap(({ osType, script }) => {
+  const { scriptIdByOs, live } = await withSystemDbAccessContext(async () => {
+    const systemScripts = await db
+      .select({ id: scripts.id, name: scripts.name })
+      .from(scripts)
+      .where(and(
+        inArray(scripts.name, BATTERY_HEALTH_SCRIPTS_BY_OS.map((s) => s.script.name)),
+        eq(scripts.isSystem, true),
+        isNull(scripts.deletedAt),
+      ));
+    const live = await db
+      .select({ id: partners.id })
+      .from(partners)
+      .where(and(isNull(partners.deletedAt), inArray(partners.status, ['pending', 'active'])));
+    return {
+      live,
+      scriptIdByOs: BATTERY_HEALTH_SCRIPTS_BY_OS.flatMap(({ osType, script }) => {
         const row = systemScripts.find((s) => s.name === script.name);
         return row ? [{ osType, scriptId: row.id }] : [];
-      });
-      // System library not ensured yet; the next tick retries.
-      if (scriptIdByOs.length !== BATTERY_HEALTH_SCRIPTS_BY_OS.length) return;
+      }),
+    };
+  });
+  // System library not ensured yet; the next tick retries.
+  if (scriptIdByOs.length !== BATTERY_HEALTH_SCRIPTS_BY_OS.length) return result;
 
-      const live = await tx
-        .select({ id: partners.id })
-        .from(partners)
-        .where(and(isNull(partners.deletedAt), inArray(partners.status, ['pending', 'active'])));
-
-      for (const { id: partnerId } of live) {
-        if (done.has(partnerId)) continue;
-        result.partners += 1;
-        newlyDone.push(partnerId);
+  // One transaction per partner: Breeze's export lock hierarchy forbids taking
+  // a partner lock after an organization lock in the same transaction, and a
+  // partner-wide automation insert takes organization locks.
+  for (const { id: partnerId } of live) {
+    if (done.has(partnerId)) continue;
+    const provisioned = await withSystemDbAccessContext(() => db.transaction(async (tx) => {
+      const [{ locked }] = (await tx.execute(
+        sql`SELECT pg_try_advisory_xact_lock(hashtext(${`fork:battery-health:${partnerId}`})) AS locked`,
+      )) as unknown as Array<{ locked: boolean }>;
+      if (!locked) return false; // another API replica is on this partner right now
+      {
         const existingKeys = new Set(
           (
             await tx
@@ -116,10 +120,14 @@ export async function provisionBatteryHealthForAllPartners(): Promise<{ partners
           }
         }
       }
-    }),
-  );
-  // Recorded only after the transaction committed.
-  if (newlyDone.length > 0) await redis.sadd(PROVISIONED_SET_KEY, ...newlyDone);
+      return true;
+    }));
+    if (provisioned) {
+      result.partners += 1;
+      // Recorded only after this partner's transaction committed.
+      await redis.sadd(PROVISIONED_SET_KEY, partnerId);
+    }
+  }
   return result;
 }
 
