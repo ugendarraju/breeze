@@ -153,6 +153,7 @@ describe('PartnersAdmin', () => {
     render(<PartnersAdmin />);
 
     expect(await screen.findByTestId('partners-admin-requires-operator')).toBeTruthy();
+    expect(screen.getByRole('heading', { level: 1, name: 'Partners' })).toBeTruthy();
   });
 
   it('shows a retry on a server error', async () => {
