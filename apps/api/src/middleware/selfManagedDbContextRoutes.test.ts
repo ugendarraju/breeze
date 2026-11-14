@@ -53,6 +53,11 @@ describe('isSelfManagedDbContextRoute', () => {
     ['get', '/api/v1/portal/network/overview'], // method is case-insensitive
     ['GET', '/api/v1/portal/network/assets'],
     ['GET', '/api/v1/portal/network/assets/'],
+    ['GET', '/api/v1/portal/network/sites'],
+    ['GET', '/api/v1/portal/network/sites/'],
+    ['GET', '/api/v1/portal/network/sites/health'],
+    ['GET', '/api/v1/portal/network/sites/health/'],
+    ['get', '/api/v1/portal/network/sites/health'], // method is case-insensitive
     // Portal logout commits its durable signed-out record in its own system
     // transaction; no portal request transaction may be held around it.
     ['POST', '/api/v1/portal/auth/logout'],
@@ -341,10 +346,14 @@ describe('isSelfManagedDbContextRoute', () => {
     ['POST', '/api/v1/portal/quotes/def-456/decline', 'accept/decline are DB-only and keep the ambient org tx'],
     ['POST', '/api/v1/portal/quotes//pay', 'empty id segment must not match'],
     ['POST', '/api/v1/portal/network/overview', 'network overview is GET-only'],
-    ['GET', '/api/v1/portal/network', 'only the overview endpoint is self-managed'],
+    ['GET', '/api/v1/portal/network', 'only the overview, assets, sites and sites/health endpoints are self-managed'],
     ['GET', '/api/v1/portal/network/overview/extra', 'extra path segment must not match'],
     ['POST', '/api/v1/portal/network/assets', 'network assets is GET-only'],
     ['GET', '/api/v1/portal/network/assets/extra', 'extra path segment must not match'],
+    ['POST', '/api/v1/portal/network/sites', 'network sites is GET-only'],
+    ['POST', '/api/v1/portal/network/sites/health', 'network site health is GET-only'],
+    ['GET', '/api/v1/portal/network/sites/extra', 'extra path segment must not match'],
+    ['GET', '/api/v1/portal/network/sites/health/extra', 'extra path segment must not match'],
     ['POST', '/api/v1/portal/quotes/def-456/pay/confirm', 'deeper portal quote path must not match'],
     ['POST', '/api/v1/invoices', 'collection route'],
     ['DELETE', '/api/v1/partner/stripe-connect', 'disconnect is DB-only and keeps the ambient transaction'],
@@ -855,6 +864,18 @@ describe('#10190 helper config', () => {
   ])('keeps ambient tx: %s %s (%s)', (method, path) => {
     expect(isSelfManagedDbContextRoute(method, path)).toBe(false);
   });
+});
+
+// Reinstall reattach (#8318 wave 2-2): the request and the candidates read run
+// their own system contexts (and Redis work) with no request transaction.
+it('self-manages the reattach request and the candidates read, and nothing near them', () => {
+  expect(isSelfManagedDbContextRoute('POST', '/api/v1/devices/abc-123/reattach')).toBe(true);
+  expect(isSelfManagedDbContextRoute('POST', '/api/v1/devices/abc-123/reattach/')).toBe(true);
+  expect(isSelfManagedDbContextRoute('GET', '/api/v1/devices/abc-123/reinstall-candidates')).toBe(true);
+  expect(isSelfManagedDbContextRoute('GET', '/api/v1/devices/abc-123/reattach')).toBe(false);
+  expect(isSelfManagedDbContextRoute('POST', '/api/v1/devices/abc-123/reinstall-candidates')).toBe(false);
+  expect(isSelfManagedDbContextRoute('POST', '/api/v1/devices/abc-123/reattach/extra')).toBe(false);
+  expect(isSelfManagedDbContextRoute('GET', '/api/v1/devices/abc-123')).toBe(false);
 });
 
 describe('routes that wait on another host self-manage their DB context', () => {
