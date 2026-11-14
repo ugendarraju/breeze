@@ -6,6 +6,8 @@ import StatusIcon from './StatusIcon';
 import { apiRegisterPartner, restoreAccessTokenFromCookieDetailed, useAuthStore } from '../../stores/auth';
 import { useRegistrationGate } from '../../stores/featuresStore';
 import { navigateTo } from '../../lib/navigation';
+import { useHashState } from '../../lib/useHashState';
+import { replaceUrl } from '../../lib/replaceUrl';
 import { fetchSignupOffer, type SignupOffer } from '../../lib/signupOffer';
 // Initializes the shared i18next singleton. This page's layout has no Sidebar
 // (which is what pulls i18n in elsewhere), so without this every t() call here
@@ -95,13 +97,14 @@ export default function PartnerRegisterPage(_props: PartnerRegisterPageProps = {
   // already-signed-in check above has resolved.
   const { enabled: registrationEnabled, loaded: gateLoaded, inviteOnly } = useRegistrationGate(sessionChecked);
   // fork: one-time technician invite, carried in the fragment (#invite=…) so it
-  // never reaches server or proxy logs.
-  const [inviteToken] = useState(() =>
-    typeof window === 'undefined' ? '' : new URLSearchParams(window.location.hash.slice(1)).get('invite') ?? '',
-  );
+  // never reaches server or proxy logs. useHashState starts from the SSR-safe ''
+  // and adopts the hash before paint (#2421).
+  const [inviteToken] = useHashState<string>('', (hash) => new URLSearchParams(hash).get('invite') ?? undefined);
   useEffect(() => {
     // Keep the one-time token out of the address bar and browser history.
-    if (inviteToken) window.history.replaceState(null, '', window.location.pathname + window.location.search);
+    // replaceUrl keeps the router's history.state (#8331) and fires no
+    // hashchange, so the captured token stays in state.
+    if (inviteToken) replaceUrl(window.location.pathname + window.location.search);
   }, [inviteToken]);
   useEffect(() => {
     if (handoff && sessionChecked && gateLoaded && !registrationEnabled) {

@@ -44,3 +44,11 @@ Every upstream file we modify gets a row below, so merge conflicts have a checkl
 ## Operational notes (not in git)
 
 - The partner directory needs a **system-scope platform admin**: `is_platform_admin = true` and **no** `partner_users` / `organization_users` rows. Breeze has no UI to create one; it is inserted with SQL. A partner-member platform admin (e.g. `admin@breeze.local`) gets a 403 there by design.
+
+### Registries updated for the invite feature (upstream guard tests)
+
+| Path | Change |
+|---|---|
+| `apps/api/src/services/mcpCoverage.ts` | `'admin/partnerSignupInvites.ts': { exempt: 'platform_admin' }` |
+| `apps/api/src/system/connections/internalEnvVars.ts` | `PARTNER_SIGNUP_INVITE_ONLY` |
+| `apps/api/src/__tests__/orgSettingsWriters.contract.test.ts` | `verifyEmail.ts` write sites 3 → 4 |
