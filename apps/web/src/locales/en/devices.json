@@ -5067,5 +5067,54 @@
       "previousPage": "Previous",
       "nextPage": "Next"
     }
+  },
+  "deviceHelp": {
+    "panel": {
+      "title": "Get help link",
+      "description": "The person using this computer can open this link to send you a ticket without an account. The ticket is linked to this device.",
+      "loading": "Loading help link…",
+      "loadFailed": "Could not load the help link.",
+      "disabled": "The help link for this device is turned off.",
+      "copy": "Copy link",
+      "copied": "Link copied",
+      "copyFailed": "Could not copy the link",
+      "rotate": "New link",
+      "rotateConfirm": "Create a new link? The current link, and any desktop shortcut that uses it, stop working until the shortcut is installed again.",
+      "rotated": "New help link created",
+      "rotateFailed": "Could not create a new link",
+      "disable": "Turn off",
+      "disableConfirm": "Turn off the help link? Nobody can send a ticket with this computer's link until you create a new one.",
+      "disabledToast": "Help link turned off",
+      "disableFailed": "Could not turn off the help link",
+      "enable": "Turn on with a new link",
+      "install": "Install desktop shortcut",
+      "installed": "Shortcut install sent to the device",
+      "installFailed": "Could not send the shortcut install",
+      "installUnsupported": "There is no shortcut script for this device's operating system."
+    },
+    "form": {
+      "title": "Get help",
+      "intro": "Tell your IT support what is wrong. They will get back to you.",
+      "checking": "Checking your help link…",
+      "invalid": "This help link is not valid any more. Please contact your IT support another way.",
+      "loadFailed": "Could not reach the help service. Check your internet connection and try again.",
+      "retry": "Try again",
+      "name": "Your name",
+      "phone": "Phone number to call you on",
+      "company": "Company name",
+      "email": "Email",
+      "details": "What is the problem?",
+      "detailsHint": "What were you doing, what went wrong, and any error message you saw.",
+      "screenshot": "Screenshot of the error (optional)",
+      "screenshotHint": "PNG, JPEG or WebP, up to 10 MB.",
+      "screenshotTooLarge": "That image is larger than 10 MB.",
+      "screenshotWrongType": "Choose a PNG, JPEG or WebP image.",
+      "submit": "Send to IT support",
+      "sending": "Sending…",
+      "sentWithNumber": "Your request was sent. Your reference is {{number}}.",
+      "sentPlain": "Your request was sent. IT support will contact you soon.",
+      "failed": "Your request could not be sent. Please try again.",
+      "another": "Send another request"
+    }
   }
 }

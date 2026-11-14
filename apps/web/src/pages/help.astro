@@ -1,0 +1,16 @@
+---
+// fork: public, unauthenticated "Get help" page opened from a managed computer's
+// desktop shortcut. The per-device token is in the URL fragment (/help#<token>),
+// read client-side only - deliberately NO auth guard. Never cached, no Referer.
+import AuthLayout from '../layouts/AuthLayout.astro';
+import DeviceHelpForm from '../components/deviceHelp/DeviceHelpForm';
+
+export const prerender = false;
+Astro.response.headers.set('Cache-Control', 'no-store, private');
+Astro.response.headers.set('Referrer-Policy', 'no-referrer');
+Astro.response.headers.set('X-Robots-Tag', 'noindex, nofollow');
+---
+
+<AuthLayout titleKey="titles.deviceHelp">
+  <DeviceHelpForm client:load />
+</AuthLayout>

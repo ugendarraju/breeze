@@ -35,6 +35,7 @@ const EXEMPT: Record<string, string> = {
   installerRoutes: 'Installer bootstrap/download flow uses bootstrap tokens.',
   supportPublicRoutes: 'Public support-code check/download bootstraps unattended support.',
   callerVerifyPublicRoutes: 'Public caller-verification card authenticates via the SMS/email link token.',
+  deviceHelpPublicRoutes: 'fork: Get help form; the derived per-device token in the body is the only credential and can only open a ticket.',
   docsRoutes: 'Public API documentation and OpenAPI documents.',
   emailUnsubscribeRoutes: 'RFC 8058 one-click unsubscribe authenticates via the HMAC-signed link token; GET never writes; per-IP rate limited (connection health W3, #8847).',
   emailWebhookRoutes: 'Inbound email webhook authenticates provider signatures.',

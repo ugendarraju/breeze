@@ -5067,5 +5067,54 @@
       "previousPage": "Précédent",
       "nextPage": "Suivant"
     }
+  },
+  "deviceHelp": {
+    "panel": {
+      "title": "Lien d’aide",
+      "description": "La personne qui utilise cet ordinateur peut ouvrir ce lien pour vous envoyer un billet sans compte. Le billet est lié à cet appareil.",
+      "loading": "Chargement du lien d’aide…",
+      "loadFailed": "Impossible de charger le lien d’aide.",
+      "disabled": "Le lien d’aide de cet appareil est désactivé.",
+      "copy": "Copier le lien",
+      "copied": "Lien copié",
+      "copyFailed": "Impossible de copier le lien",
+      "rotate": "Nouveau lien",
+      "rotateConfirm": "Créer un nouveau lien? Le lien actuel et tout raccourci qui l’utilise cesseront de fonctionner jusqu’à ce que le raccourci soit réinstallé.",
+      "rotated": "Nouveau lien d’aide créé",
+      "rotateFailed": "Impossible de créer un nouveau lien",
+      "disable": "Désactiver",
+      "disableConfirm": "Désactiver le lien d’aide? Personne ne pourra envoyer de billet avec le lien de cet ordinateur avant que vous en créiez un nouveau.",
+      "disabledToast": "Lien d’aide désactivé",
+      "disableFailed": "Impossible de désactiver le lien d’aide",
+      "enable": "Activer avec un nouveau lien",
+      "install": "Installer le raccourci sur le bureau",
+      "installed": "Installation du raccourci envoyée à l’appareil",
+      "installFailed": "Impossible d’envoyer l’installation du raccourci",
+      "installUnsupported": "Aucun script de raccourci pour le système d’exploitation de cet appareil."
+    },
+    "form": {
+      "title": "Obtenir de l’aide",
+      "intro": "Expliquez le problème à votre soutien informatique. On vous répondra.",
+      "checking": "Vérification de votre lien d’aide…",
+      "invalid": "Ce lien d’aide n’est plus valide. Veuillez joindre votre soutien informatique autrement.",
+      "loadFailed": "Impossible de joindre le service d’aide. Vérifiez votre connexion Internet et réessayez.",
+      "retry": "Réessayer",
+      "name": "Votre nom",
+      "phone": "Numéro de téléphone pour vous joindre",
+      "company": "Nom de l’entreprise",
+      "email": "Courriel",
+      "details": "Quel est le problème?",
+      "detailsHint": "Ce que vous faisiez, ce qui n’a pas fonctionné et tout message d’erreur affiché.",
+      "screenshot": "Capture d’écran de l’erreur (facultatif)",
+      "screenshotHint": "PNG, JPEG ou WebP, jusqu’à 10 Mo.",
+      "screenshotTooLarge": "Cette image dépasse 10 Mo.",
+      "screenshotWrongType": "Choisissez une image PNG, JPEG ou WebP.",
+      "submit": "Envoyer au soutien informatique",
+      "sending": "Envoi…",
+      "sentWithNumber": "Votre demande a été envoyée. Votre référence est {{number}}.",
+      "sentPlain": "Votre demande a été envoyée. Le soutien informatique vous contactera bientôt.",
+      "failed": "Votre demande n’a pas pu être envoyée. Veuillez réessayer.",
+      "another": "Envoyer une autre demande"
+    }
   }
 }

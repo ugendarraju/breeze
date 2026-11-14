@@ -5067,5 +5067,54 @@
       "previousPage": "Zurück",
       "nextPage": "Weiter"
     }
+  },
+  "deviceHelp": {
+    "panel": {
+      "title": "Hilfe-Link",
+      "description": "Die Person an diesem Computer kann über diesen Link ohne Konto ein Ticket an Sie senden. Das Ticket ist mit diesem Gerät verknüpft.",
+      "loading": "Hilfe-Link wird geladen…",
+      "loadFailed": "Der Hilfe-Link konnte nicht geladen werden.",
+      "disabled": "Der Hilfe-Link für dieses Gerät ist ausgeschaltet.",
+      "copy": "Link kopieren",
+      "copied": "Link kopiert",
+      "copyFailed": "Der Link konnte nicht kopiert werden",
+      "rotate": "Neuer Link",
+      "rotateConfirm": "Einen neuen Link erstellen? Der aktuelle Link und jede Desktop-Verknüpfung damit funktionieren erst wieder, wenn die Verknüpfung neu installiert wird.",
+      "rotated": "Neuer Hilfe-Link erstellt",
+      "rotateFailed": "Neuer Link konnte nicht erstellt werden",
+      "disable": "Ausschalten",
+      "disableConfirm": "Hilfe-Link ausschalten? Bis Sie einen neuen Link erstellen, kann niemand über den Link dieses Computers ein Ticket senden.",
+      "disabledToast": "Hilfe-Link ausgeschaltet",
+      "disableFailed": "Hilfe-Link konnte nicht ausgeschaltet werden",
+      "enable": "Mit neuem Link einschalten",
+      "install": "Desktop-Verknüpfung installieren",
+      "installed": "Installation der Verknüpfung an das Gerät gesendet",
+      "installFailed": "Installation der Verknüpfung konnte nicht gesendet werden",
+      "installUnsupported": "Für das Betriebssystem dieses Geräts gibt es kein Verknüpfungsskript."
+    },
+    "form": {
+      "title": "Hilfe anfordern",
+      "intro": "Beschreiben Sie Ihrem IT-Support das Problem. Er meldet sich bei Ihnen.",
+      "checking": "Hilfe-Link wird geprüft…",
+      "invalid": "Dieser Hilfe-Link ist nicht mehr gültig. Bitte kontaktieren Sie Ihren IT-Support auf anderem Weg.",
+      "loadFailed": "Der Hilfedienst ist nicht erreichbar. Prüfen Sie Ihre Internetverbindung und versuchen Sie es erneut.",
+      "retry": "Erneut versuchen",
+      "name": "Ihr Name",
+      "phone": "Telefonnummer für Rückrufe",
+      "company": "Firmenname",
+      "email": "E-Mail-Adresse",
+      "details": "Was ist das Problem?",
+      "detailsHint": "Was haben Sie gerade gemacht, was ist schiefgelaufen, und welche Fehlermeldung wurde angezeigt?",
+      "screenshot": "Bildschirmfoto des Fehlers (optional)",
+      "screenshotHint": "PNG, JPEG oder WebP, bis 10 MB.",
+      "screenshotTooLarge": "Das Bild ist größer als 10 MB.",
+      "screenshotWrongType": "Wählen Sie ein PNG-, JPEG- oder WebP-Bild.",
+      "submit": "An den IT-Support senden",
+      "sending": "Wird gesendet…",
+      "sentWithNumber": "Ihre Anfrage wurde gesendet. Ihre Referenz lautet {{number}}.",
+      "sentPlain": "Ihre Anfrage wurde gesendet. Der IT-Support meldet sich bald bei Ihnen.",
+      "failed": "Ihre Anfrage konnte nicht gesendet werden. Bitte versuchen Sie es erneut.",
+      "another": "Weitere Anfrage senden"
+    }
   }
 }

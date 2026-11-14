@@ -93,7 +93,10 @@ describe('SYSTEM_LIBRARY_SCRIPTS definitions', () => {
   it('script content reads every declared parameter via its BREEZE_PARAM_ env var', () => {
     for (const def of SYSTEM_LIBRARY_SCRIPTS) {
       for (const p of def.parameters ?? []) {
-        expect(def.content).toContain(`$env:${scriptParameterEnvName(p.name)}`);
+        // fork: bash scripts (Get help shortcut, macOS/Linux) read it as $NAME / ${NAME...}.
+        const name = scriptParameterEnvName(p.name);
+        if (def.language === 'bash') expect(def.content).toMatch(new RegExp(`\\$\\{?${name}\\b`));
+        else expect(def.content).toContain(`$env:${name}`);
       }
     }
   });

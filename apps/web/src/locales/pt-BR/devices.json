@@ -5067,5 +5067,54 @@
       "previousPage": "Anterior",
       "nextPage": "Próxima"
     }
+  },
+  "deviceHelp": {
+    "panel": {
+      "title": "Link de ajuda",
+      "description": "Quem usa este computador pode abrir este link para enviar um chamado a você sem conta. O chamado fica vinculado a este dispositivo.",
+      "loading": "Carregando o link de ajuda…",
+      "loadFailed": "Não foi possível carregar o link de ajuda.",
+      "disabled": "O link de ajuda deste dispositivo está desativado.",
+      "copy": "Copiar link",
+      "copied": "Link copiado",
+      "copyFailed": "Não foi possível copiar o link",
+      "rotate": "Novo link",
+      "rotateConfirm": "Criar um novo link? O link atual e qualquer atalho que o use deixam de funcionar até o atalho ser instalado de novo.",
+      "rotated": "Novo link de ajuda criado",
+      "rotateFailed": "Não foi possível criar um novo link",
+      "disable": "Desativar",
+      "disableConfirm": "Desativar o link de ajuda? Ninguém poderá enviar chamados pelo link deste computador até você criar um novo.",
+      "disabledToast": "Link de ajuda desativado",
+      "disableFailed": "Não foi possível desativar o link de ajuda",
+      "enable": "Ativar com um novo link",
+      "install": "Instalar atalho na área de trabalho",
+      "installed": "Instalação do atalho enviada ao dispositivo",
+      "installFailed": "Não foi possível enviar a instalação do atalho",
+      "installUnsupported": "Não há script de atalho para o sistema operacional deste dispositivo."
+    },
+    "form": {
+      "title": "Pedir ajuda",
+      "intro": "Conte ao seu suporte de TI o que está acontecendo. Eles vão retornar o contato.",
+      "checking": "Verificando seu link de ajuda…",
+      "invalid": "Este link de ajuda não é mais válido. Entre em contato com seu suporte de TI de outra forma.",
+      "loadFailed": "Não foi possível acessar o serviço de ajuda. Verifique sua conexão com a internet e tente novamente.",
+      "retry": "Tentar novamente",
+      "name": "Seu nome",
+      "phone": "Telefone para contato",
+      "company": "Nome da empresa",
+      "email": "E-mail",
+      "details": "Qual é o problema?",
+      "detailsHint": "O que você estava fazendo, o que deu errado e qualquer mensagem de erro exibida.",
+      "screenshot": "Captura de tela do erro (opcional)",
+      "screenshotHint": "PNG, JPEG ou WebP, até 10 MB.",
+      "screenshotTooLarge": "Essa imagem tem mais de 10 MB.",
+      "screenshotWrongType": "Escolha uma imagem PNG, JPEG ou WebP.",
+      "submit": "Enviar ao suporte de TI",
+      "sending": "Enviando…",
+      "sentWithNumber": "Sua solicitação foi enviada. Sua referência é {{number}}.",
+      "sentPlain": "Sua solicitação foi enviada. O suporte de TI entrará em contato em breve.",
+      "failed": "Não foi possível enviar sua solicitação. Tente novamente.",
+      "another": "Enviar outra solicitação"
+    }
   }
 }

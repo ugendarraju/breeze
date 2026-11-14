@@ -95,6 +95,7 @@ import { decodeScriptExecutionId } from "@/lib/deviceScriptsLink";
 import { OverflowTabs, type OverflowTab } from "../shared/OverflowTabs";
 import DeviceBackupTab from "../backup/DeviceBackupTab";
 import DeviceTicketsTab from "../tickets/DeviceTicketsTab";
+import DeviceHelpLinkPanel from "../deviceHelp/DeviceHelpLinkPanel"; // fork: Get help link
 import OperatorTaskActivityFeed from "../aiOperator/OperatorTaskActivityFeed";
 import DeviceAnomaliesPanel from "./DeviceAnomaliesPanel";
 import { useMlFeatureFlags } from "@/hooks/useMlFeatureFlags";
@@ -1285,7 +1286,12 @@ export default function DeviceDetails({
         />
       )}
 
-      {activeTab === "tickets" && <DeviceTicketsTab deviceId={device.id} />}
+      {activeTab === "tickets" && (
+        <>
+          <DeviceHelpLinkPanel deviceId={device.id} />
+          <DeviceTicketsTab deviceId={device.id} />
+        </>
+      )}
 
       {activeTab === "chat" && (
         <DeviceChatPanel

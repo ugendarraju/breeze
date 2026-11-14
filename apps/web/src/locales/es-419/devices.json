@@ -5067,5 +5067,54 @@
       "previousPage": "Anterior",
       "nextPage": "Siguiente"
     }
+  },
+  "deviceHelp": {
+    "panel": {
+      "title": "Enlace de ayuda",
+      "description": "La persona que usa esta computadora puede abrir este enlace para enviarte un ticket sin cuenta. El ticket queda vinculado a este dispositivo.",
+      "loading": "Cargando el enlace de ayuda…",
+      "loadFailed": "No se pudo cargar el enlace de ayuda.",
+      "disabled": "El enlace de ayuda de este dispositivo está desactivado.",
+      "copy": "Copiar enlace",
+      "copied": "Enlace copiado",
+      "copyFailed": "No se pudo copiar el enlace",
+      "rotate": "Nuevo enlace",
+      "rotateConfirm": "¿Crear un enlace nuevo? El enlace actual y cualquier acceso directo que lo use dejarán de funcionar hasta que se vuelva a instalar el acceso directo.",
+      "rotated": "Se creó un enlace de ayuda nuevo",
+      "rotateFailed": "No se pudo crear un enlace nuevo",
+      "disable": "Desactivar",
+      "disableConfirm": "¿Desactivar el enlace de ayuda? Nadie podrá enviar tickets con el enlace de esta computadora hasta que crees uno nuevo.",
+      "disabledToast": "Enlace de ayuda desactivado",
+      "disableFailed": "No se pudo desactivar el enlace de ayuda",
+      "enable": "Activar con un enlace nuevo",
+      "install": "Instalar acceso directo en el escritorio",
+      "installed": "Se envió la instalación del acceso directo al dispositivo",
+      "installFailed": "No se pudo enviar la instalación del acceso directo",
+      "installUnsupported": "No hay un script de acceso directo para el sistema operativo de este dispositivo."
+    },
+    "form": {
+      "title": "Pedir ayuda",
+      "intro": "Cuéntale a tu soporte de TI qué ocurre. Se pondrán en contacto contigo.",
+      "checking": "Comprobando tu enlace de ayuda…",
+      "invalid": "Este enlace de ayuda ya no es válido. Comunícate con tu soporte de TI por otra vía.",
+      "loadFailed": "No se pudo conectar con el servicio de ayuda. Revisa tu conexión a internet e inténtalo de nuevo.",
+      "retry": "Reintentar",
+      "name": "Tu nombre",
+      "phone": "Teléfono para llamarte",
+      "company": "Nombre de la empresa",
+      "email": "Correo electrónico",
+      "details": "¿Cuál es el problema?",
+      "detailsHint": "Qué estabas haciendo, qué salió mal y cualquier mensaje de error que viste.",
+      "screenshot": "Captura de pantalla del error (opcional)",
+      "screenshotHint": "PNG, JPEG o WebP, hasta 10 MB.",
+      "screenshotTooLarge": "Esa imagen pesa más de 10 MB.",
+      "screenshotWrongType": "Elige una imagen PNG, JPEG o WebP.",
+      "submit": "Enviar al soporte de TI",
+      "sending": "Enviando…",
+      "sentWithNumber": "Tu solicitud se envió. Tu referencia es {{number}}.",
+      "sentPlain": "Tu solicitud se envió. El soporte de TI te contactará pronto.",
+      "failed": "No se pudo enviar tu solicitud. Inténtalo de nuevo.",
+      "another": "Enviar otra solicitud"
+    }
   }
 }
