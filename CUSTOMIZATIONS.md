@@ -41,6 +41,7 @@ Every upstream file we modify gets a row below, so merge conflicts have a checkl
 | `apps/web/src/components/layout/Sidebar.tsx` | One `Partners` item at the top of the `administration` section | Sidebar link to `/admin/partners` |
 | `apps/web/src/locales/*/common.json` (8 files) | `nav.partnersAdmin` key next to `nav.deletionRequests` | `Sidebar.nav.test.tsx` requires every nav item to have a translated key |
 | `apps/web/src/styles/globals.css` | Rules after the global `select { padding-right }`: zero block padding on `h-6`..`h-10` selects; opaque tint + `z-index` on `thead.sticky.bg-muted/40` and `/30` | Fixed-height selects clipped their text (forms plugin padding); translucent sticky table headers let rows show through (Software tab and ~17 other tables) |
+| `apps/web/src/components/devices/DeviceDetails.tsx` | Header icon uses `getDeviceRoleIcon(device.deviceRole)` (Monitor when unknown) | Servers, printers etc. no longer all show a monitor |
 
 ## Operational notes (not in git)
 

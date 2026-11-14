@@ -7,6 +7,7 @@ import { ENABLE_ENDPOINT_MESSAGING } from "@/lib/featureFlags";
 import DeviceChatPanel from "../endpointMessages/DeviceChatPanel";
 import { fetchWithAuth } from "../../stores/auth";
 import { asList } from "@/lib/asList";
+import { getDeviceRoleIcon } from "@/lib/deviceRoles";
 import {
   Monitor,
   Container,
@@ -453,6 +454,11 @@ export default function DeviceDetails({
   const { t } = useTranslation("devices");
   usePageItemName(device.displayName || device.hostname);
   const deviceName = device.displayName || device.hostname;
+  // Header icon follows the role (server, printer...); unknown keeps the monitor.
+  const HeaderIcon =
+    device.deviceRole && device.deviceRole !== "unknown"
+      ? getDeviceRoleIcon(device.deviceRole)
+      : Monitor;
   const showHostname = Boolean(device.hostname) && device.hostname !== deviceName;
   const statsCurrent = metricsAreCurrent(device.status, metricsSampledAt);
   const formatStat = (value: number) =>
@@ -921,8 +927,11 @@ export default function DeviceDetails({
       <div className="rounded-lg border bg-card p-4 shadow-xs md:p-6">
         <div className="flex flex-col gap-4 2xl:flex-row 2xl:items-start 2xl:justify-between">
           <div className="flex min-w-0 flex-1 items-start gap-4">
-            <div className="hidden h-14 w-14 shrink-0 items-center justify-center rounded-lg bg-muted md:flex">
-              <Monitor className="h-7 w-7 text-muted-foreground" />
+            <div
+              data-testid="device-header-role-icon"
+              className="hidden h-14 w-14 shrink-0 items-center justify-center rounded-lg bg-muted md:flex"
+            >
+              <HeaderIcon className="h-7 w-7 text-muted-foreground" />
             </div>
             <div className="min-w-0 flex-1">
               <div className="flex min-w-0 flex-col items-start gap-1.5 md:flex-row md:flex-wrap md:items-center md:gap-3">
