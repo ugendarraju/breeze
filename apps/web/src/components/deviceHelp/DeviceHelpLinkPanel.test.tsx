@@ -4,6 +4,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const fetchWithAuth = vi.hoisted(() => vi.fn());
 vi.mock('../../stores/auth', () => ({ fetchWithAuth }));
+const showToast = vi.hoisted(() => vi.fn());
+vi.mock('../shared/Toast', async (orig) => ({ ...(await orig<typeof import('../shared/Toast')>()), showToast }));
 
 import DeviceHelpLinkPanel from './DeviceHelpLinkPanel';
 
@@ -16,13 +18,16 @@ function json(body: unknown, status = 200) {
 }
 
 beforeEach(() => {
+  showToast.mockReset();
   fetchWithAuth.mockReset().mockImplementation(async (url: string) => {
     if (url === `/device-help/devices/${DEVICE}`) {
       return json({ enabled: true, url: URL1, osType: 'windows', shortcutScriptIds: { windows: 'script-win' } });
     }
     if (url.endsWith('/rotate')) return json({ enabled: true, url: URL2 });
     if (url.endsWith('/disable')) return json({ enabled: false, url: null });
-    if (url === '/scripts/script-win/execute') return json({ success: true });
+    if (url === '/scripts/script-win/execute') {
+      return json({ requestId: 'r1', status: 'admitted', targets: [{ requestedDeviceId: DEVICE, admission: 'admitted' }] }, 201);
+    }
     return json({ error: 'unexpected' }, 500);
   });
 });
@@ -40,6 +45,21 @@ describe('DeviceHelpLinkPanel', () => {
     await waitFor(() => expect(fetchWithAuth).toHaveBeenCalledWith('/scripts/script-win/execute', expect.anything()));
     const init = fetchWithAuth.mock.calls.find(([u]) => u === '/scripts/script-win/execute')![1] as RequestInit;
     expect(JSON.parse(String(init.body))).toEqual({ deviceIds: [DEVICE], parameters: { help_url: URL1, action: 'install' } });
+    await waitFor(() => expect(showToast).toHaveBeenCalledWith({ type: 'success', message: 'Shortcut install sent to the device' }));
+  });
+
+  it('a 201 that did not admit the device is reported as a failure, not as sent', async () => {
+    fetchWithAuth.mockImplementation(async (url: string) => {
+      if (url === `/device-help/devices/${DEVICE}`) {
+        return json({ enabled: true, url: URL1, osType: 'windows', shortcutScriptIds: { windows: 'script-win' } });
+      }
+      return json({ requestId: 'r1', status: 'none_admitted', targets: [{ requestedDeviceId: DEVICE, admission: 'excluded', reasonCode: 'device_offline' }] }, 201);
+    });
+    const user = userEvent.setup();
+    render(<DeviceHelpLinkPanel deviceId={DEVICE} />);
+    await user.click(await screen.findByTestId('device-help-install'));
+    await waitFor(() => expect(showToast).toHaveBeenCalledWith({ type: 'error', message: 'Could not send the shortcut install (device_offline)' }));
+    expect(showToast).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'success' }));
   });
 
   it('disables install when there is no script for the device OS', async () => {

@@ -78,15 +78,23 @@ export default function DeviceHelpLinkPanel({ deviceId }: { deviceId: string }) 
     const url = view.url;
     setBusy(true);
     try {
-      await runAction({
+      // A 201 can still refuse the device (offline policy, OS, site access...):
+      // only an `admitted` target means the install was really queued.
+      const result = await runAction<{ targets?: Array<{ admission: string; reasonCode?: string }> }>({
         request: () => fetchWithAuth(`/scripts/${scriptId}/execute`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ deviceIds: [deviceId], parameters: { help_url: url, action: 'install' } }),
         }),
         errorFallback: t('deviceHelp.panel.installFailed'),
-        successMessage: t('deviceHelp.panel.installed'),
       });
+      const refused = (result?.targets ?? []).filter((target) => target.admission !== 'admitted');
+      if (refused.length > 0 || !result?.targets?.length) {
+        const reasons = [...new Set(refused.map((target) => target.reasonCode ?? target.admission))].join(', ');
+        showToast({ type: 'error', message: reasons ? `${t('deviceHelp.panel.installFailed')} (${reasons})` : t('deviceHelp.panel.installFailed') });
+      } else {
+        showToast({ type: 'success', message: t('deviceHelp.panel.installed') });
+      }
     } catch (err) {
       handleError(err, t('deviceHelp.panel.installFailed'));
     } finally {

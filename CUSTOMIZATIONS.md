@@ -97,7 +97,7 @@ The person at a managed computer opens a per-device link (`/help#<token>`, usual
 | `apps/api/src/services/deviceHelp/helpTicket.ts` (+ `.test.ts`) | added | Form -> ticket + screenshot attachment |
 | `apps/api/src/services/deviceHelp/helpShortcutScripts.ts` (+ `.test.ts`) | added | "Get Help Desktop Shortcut (Windows / macOS / Linux)" system scripts (`help_url`, `action`) |
 | `apps/api/src/routes/deviceHelpPublic.ts` (+ `.test.ts`) | added | Public check/submit |
-| `apps/api/src/routes/deviceHelp.ts` | added | Technician GET / rotate / disable (`devices.read` / `devices.write`, org + site access, audited) |
+| `apps/api/src/routes/deviceHelp.ts` (+ `.test.ts`) | added | Technician GET / rotate / disable (`devices.read` / `devices.write`, org + site access, audited) |
 | `apps/web/src/pages/help.astro` | added | Public page |
 | `apps/web/src/components/deviceHelp/DeviceHelpForm.tsx` (+ `.test.tsx`) | added | Public form |
 | `apps/web/src/components/deviceHelp/DeviceHelpLinkPanel.tsx` (+ `.test.tsx`) | added | Device Tickets tab panel: copy, install shortcut, new link, turn off |
