@@ -27,3 +27,10 @@ Every upstream file we modify gets a row below, so merge conflicts have a checkl
 ## Operational notes (not in git)
 
 - The partner directory needs a **system-scope platform admin**: `is_platform_admin = true` and **no** `partner_users` / `organization_users` rows. Breeze has no UI to create one; it is inserted with SQL. A partner-member platform admin (e.g. `admin@breeze.local`) gets a 403 there by design.
+
+## Library scripts listed on the Scripts page (fork)
+
+| Path | Change |
+|---|---|
+| `apps/web/src/components/scripts/ScriptsPage.tsx` | Loads the list with `includeSystem: true`; Edit / Duplicate on a built-in script opens Import from Library |
+| `apps/web/src/components/scripts/ScriptList.tsx` | No Edit / Delete buttons on `isSystem` rows (Run and the copy button stay) |
