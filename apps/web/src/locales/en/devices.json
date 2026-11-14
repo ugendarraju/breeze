@@ -2629,6 +2629,14 @@
     }
   },
   "deviceWarrantyCard": {
+    "manual": {
+      "checkVendor": "Check on vendor site",
+      "editDates": "Edit dates",
+      "saving": "Saving…",
+      "saved": "Warranty dates saved",
+      "saveFailed": "Could not save warranty dates",
+      "serialCopied": "Serial number copied"
+    },
     "checking": "Checking",
     "compactTitle": "Warranty",
     "endDate": "End Date",

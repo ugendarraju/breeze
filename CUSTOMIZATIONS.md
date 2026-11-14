@@ -83,3 +83,14 @@ Parked alternative: branch `feature/battery-health-agent` collects the same data
 | `apps/web/src/components/devices/DeviceSoftwareInventory.tsx` | "Updates only" toggle, row checkboxes on updatable rows, "Select all with updates", "Update selected (N)" (sequential, one summary toast); `queueSoftwareAction` gains `quiet` and returns success |
 | `apps/web/src/components/devices/DeviceSoftwareInventory.bulk.test.tsx` | added: tests for the above |
 | `apps/web/src/locales/*/devices.json` (8 files) | `deviceSoftwareInventory.bulk.*` |
+
+## Manual warranty dates (fork)
+
+| Path | Change |
+|---|---|
+| `apps/api/src/routes/devices/warranty.ts` | `PUT /devices/:id/warranty/manual` (dates saved via `applyWarrantyImport`, data_source `import`; 409 for agent-owned; audited) |
+| `apps/api/src/routes/devices/warranty.test.ts` | MFA gate count pin 1 -> 2 |
+| `apps/api/src/routes/devices/warranty.manual.test.ts` | added: route tests |
+| `apps/web/src/components/devices/WarrantyManualControls.tsx` (+ `.test.tsx`) | added: "Edit dates" + "Check on vendor site" (ASUS global, Acer, Microsoft, Dell service tag, HP, Lenovo) |
+| `apps/web/src/components/devices/DeviceWarrantyCard.tsx` | Renders `WarrantyManualControls` beside Refresh |
+| `apps/web/src/locales/*/devices.json` (8 files) | `deviceWarrantyCard.manual.*` |

@@ -2629,6 +2629,14 @@
     }
   },
   "deviceWarrantyCard": {
+    "manual": {
+      "checkVendor": "Verificar no site do fabricante",
+      "editDates": "Editar datas",
+      "saving": "Salvando…",
+      "saved": "Datas de garantia salvas",
+      "saveFailed": "Não foi possível salvar as datas de garantia",
+      "serialCopied": "Número de série copiado"
+    },
     "checking": "Verificando",
     "compactTitle": "Garantia",
     "endDate": "Data de término",

@@ -58,7 +58,8 @@ describe('device warranty routes', () => {
   it('registers read and write permission gates', () => {
     expect(registeredPermissionCalls).toContainEqual(['devices', 'read']);
     expect(registeredPermissionCalls).toContainEqual(['devices', 'write']);
-    expect(registeredMfaCallCount).toBe(1);
+    // fork: 2 = refresh + manual warranty dates (PUT /:id/warranty/manual)
+    expect(registeredMfaCallCount).toBe(2);
   });
 
   it('denies warranty reads when site scope excludes the device', async () => {

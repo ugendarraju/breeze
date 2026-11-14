@@ -7,6 +7,7 @@ import { showToast } from '../shared/Toast';
 import { navigateTo } from '@/lib/navigation';
 import { parseDateOnly } from '@/lib/dateOnly';
 import { loginPathWithNext } from '../../lib/authScope';
+import WarrantyManualControls from './WarrantyManualControls'; // fork
 
 const UNAUTHORIZED = () => void navigateTo(loginPathWithNext(), { replace: true });
 
@@ -363,6 +364,16 @@ export default function DeviceWarrantyCard({
             {t(/* i18n-dynamic */ `deviceWarrantyCard.status.${cfg.label}`)}
           </span>
         </div>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {/* fork: manual warranty dates + vendor warranty page */}
+          <WarrantyManualControls<WarrantyData>
+            deviceId={deviceId}
+            manufacturer={warranty.manufacturer}
+            serialNumber={warranty.serialNumber}
+            warrantyStartDate={warranty.warrantyStartDate}
+            warrantyEndDate={warranty.warrantyEndDate}
+            onSaved={(saved) => setWarranty(saved)}
+          />
         <button
           type="button"
           onClick={handleRefresh}
@@ -372,6 +383,7 @@ export default function DeviceWarrantyCard({
           <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
           {refreshing ? t('deviceWarrantyCard.checking') : t('common:actions.refresh')}
         </button>
+        </div>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-4">

@@ -2629,6 +2629,14 @@
     }
   },
   "deviceWarrantyCard": {
+    "manual": {
+      "checkVendor": "Üretici sitesinde kontrol et",
+      "editDates": "Tarihleri düzenle",
+      "saving": "Kaydediliyor…",
+      "saved": "Garanti tarihleri kaydedildi",
+      "saveFailed": "Garanti tarihleri kaydedilemedi",
+      "serialCopied": "Seri numarası kopyalandı"
+    },
     "checking": "Kontrol ediliyor",
     "compactTitle": "Garanti",
     "endDate": "Bitiş Tarihi",
