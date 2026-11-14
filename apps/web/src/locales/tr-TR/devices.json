@@ -2539,6 +2539,14 @@
     "unknownSoftware": "Bilinmeyen yazılım",
     "updateTitle": "Başlığı Güncelle",
     "updatesAvailable": "{{count}} güncellemeler mevcut",
+    "bulk": {
+      "updatesOnly": "Yalnızca güncellemeler",
+      "selectAll": "Güncellemesi olanların tümünü seç ({{count}})",
+      "clearSelection": "Seçimi temizle",
+      "updateSelected": "Seçilenleri güncelle ({{count}})",
+      "selectRow": "{{name}} seç",
+      "queued": "{{total}} güncellemeden {{queued}} tanesi kuyruğa alındı"
+    },
     "updatesAvailable_one": "{{count}} güncellemesi mevcut",
     "updatesAvailable_other": "{{count}} güncellemeler mevcut"
   },

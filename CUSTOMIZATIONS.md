@@ -76,3 +76,10 @@ Parked alternative: branch `feature/battery-health-agent` collects the same data
 |---|---|
 | `apps/web/src/components/scripts/ScriptsPage.tsx` | Loads the list with `includeSystem: true`; Edit / Duplicate on a built-in script opens Import from Library |
 | `apps/web/src/components/scripts/ScriptList.tsx` | No Edit / Delete buttons on `isSystem` rows (Run and the copy button stay) |
+## Software tab: updates filter + bulk update (fork)
+
+| Path | Change |
+|---|---|
+| `apps/web/src/components/devices/DeviceSoftwareInventory.tsx` | "Updates only" toggle, row checkboxes on updatable rows, "Select all with updates", "Update selected (N)" (sequential, one summary toast); `queueSoftwareAction` gains `quiet` and returns success |
+| `apps/web/src/components/devices/DeviceSoftwareInventory.bulk.test.tsx` | added: tests for the above |
+| `apps/web/src/locales/*/devices.json` (8 files) | `deviceSoftwareInventory.bulk.*` |

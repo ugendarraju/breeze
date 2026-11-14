@@ -2539,6 +2539,14 @@
     "unknownSoftware": "Unbekannte Software",
     "updateTitle": "Titel aktualisieren",
     "updatesAvailable": "{{count}} Updates verfügbar",
+    "bulk": {
+      "updatesOnly": "Nur Updates",
+      "selectAll": "Alle mit Updates auswählen ({{count}})",
+      "clearSelection": "Auswahl aufheben",
+      "updateSelected": "Ausgewählte aktualisieren ({{count}})",
+      "selectRow": "{{name}} auswählen",
+      "queued": "{{queued}} von {{total}} Updates eingereiht"
+    },
     "updatesAvailable_one": "{{count}} Update verfügbar",
     "updatesAvailable_other": "{{count}} Updates verfügbar"
   },
