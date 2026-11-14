@@ -16,27 +16,57 @@ export const BATTERY_FIELD_KEYS = {
 
 const CONTENT = `# Battery health (Windows) - Breeze fork.
 #
-# Reads the ACPI battery classes in root\\wmi and saves them on this device as
-# custom fields (design capacity, full-charge capacity in mWh; cycle count).
+# Saves design capacity and full-charge capacity (mWh) and cycle count on this
+# device as custom fields. Two sources, in order:
+#   1. the ACPI battery classes in root\\wmi (cheap, but many consumer laptops
+#      leave BatteryStaticData empty);
+#   2. Windows' own battery report (powercfg /batteryreport /xml), which reads
+#      the battery driver directly - the same numbers "battery report" shows.
 # Devices without a battery (desktops, servers, most VMs) exit 0 and write
-# nothing. Read-only: changes nothing on the device.
+# nothing. Read-only apart from a temporary report file it deletes.
 $ErrorActionPreference = 'SilentlyContinue'
+$design = 0; $full = 0; $cycles = 0; $source = $null
+
 $static = Get-CimInstance -Namespace root/wmi -ClassName BatteryStaticData | Select-Object -First 1
-$full = Get-CimInstance -Namespace root/wmi -ClassName BatteryFullChargedCapacity | Select-Object -First 1
-if (-not $static -or -not $full) {
-  Write-Output 'No battery health data on this device (no battery, or the firmware does not report it).'
+$charged = Get-CimInstance -Namespace root/wmi -ClassName BatteryFullChargedCapacity | Select-Object -First 1
+if ($static -and $charged -and [int64]$static.DesignedCapacity -gt 0 -and [int64]$charged.FullChargedCapacity -gt 0) {
+  $design = [int64]$static.DesignedCapacity; $full = [int64]$charged.FullChargedCapacity; $source = 'WMI'
+  $c = Get-CimInstance -Namespace root/wmi -ClassName BatteryCycleCount | Select-Object -First 1
+  if ($c) { $cycles = [int64]$c.CycleCount }
+} else {
+  $report = Join-Path $env:TEMP ('breeze-battery-' + [guid]::NewGuid().ToString('N') + '.xml')
+  & powercfg.exe /batteryreport /xml /output $report | Out-Null
+  if (Test-Path -LiteralPath $report) {
+    try {
+      [xml]$xml = Get-Content -LiteralPath $report -Raw
+      $bat = @($xml.BatteryReport.Batteries.Battery) | Where-Object { $_ } | Select-Object -First 1
+      if ($bat) {
+        if ([string]$bat.RelativeCapacity -eq '1') {
+          Write-Output 'This battery reports capacity only in relative units, not mWh; nothing saved.'
+          exit 0
+        }
+        $design = [int64]$bat.DesignCapacity; $full = [int64]$bat.FullChargeCapacity; $cycles = [int64]$bat.CycleCount
+        $source = 'battery report'
+      }
+    } finally {
+      Remove-Item -LiteralPath $report -Force
+    }
+  }
+}
+
+if (-not $source) {
+  Write-Output 'No battery on this device (or Windows reports no battery details).'
   exit 0
 }
 $fields = [ordered]@{}
-if ([int64]$static.DesignedCapacity -gt 0) { $fields['${BATTERY_FIELD_KEYS.design}'] = [int64]$static.DesignedCapacity }
-if ([int64]$full.FullChargedCapacity -gt 0) { $fields['${BATTERY_FIELD_KEYS.full}'] = [int64]$full.FullChargedCapacity }
-$cycles = Get-CimInstance -Namespace root/wmi -ClassName BatteryCycleCount | Select-Object -First 1
-if ($cycles -and [int64]$cycles.CycleCount -gt 0) { $fields['${BATTERY_FIELD_KEYS.cycles}'] = [int64]$cycles.CycleCount }
+if ($design -gt 0) { $fields['${BATTERY_FIELD_KEYS.design}'] = $design }
+if ($full -gt 0) { $fields['${BATTERY_FIELD_KEYS.full}'] = $full }
+if ($cycles -gt 0) { $fields['${BATTERY_FIELD_KEYS.cycles}'] = $cycles }
 if ($fields.Count -eq 0) {
   Write-Output 'The battery reported zero capacity; nothing saved.'
   exit 0
 }
-Write-Output ('Design capacity: {0} mWh, full charge capacity: {1} mWh' -f $static.DesignedCapacity, $full.FullChargedCapacity)
+Write-Output ('Source: {0}. Design capacity: {1} mWh, full charge capacity: {2} mWh, cycles: {3}' -f $source, $design, $full, $cycles)
 Write-Output ('::breeze:custom-fields:: ' + ($fields | ConvertTo-Json -Compress))
 `;
 
