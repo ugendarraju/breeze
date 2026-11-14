@@ -451,6 +451,8 @@ export default function ScriptList({
                         <Play className="h-3 w-3" />
                         {t('common:actions.run')}
                       </button>
+                      {/* fork: built-in library scripts are read-only (copy via import) */}
+                      {!script.isSystem && (
                       <button
                         type="button"
                         onClick={(e) => {
@@ -462,6 +464,7 @@ export default function ScriptList({
                       >
                         <Pencil className="h-4 w-4" />
                       </button>
+                      )}
                       {onDuplicate && (
                         <button
                           type="button"
@@ -475,6 +478,7 @@ export default function ScriptList({
                           <Copy className="h-4 w-4" />
                         </button>
                       )}
+                      {!script.isSystem && (
                       <button
                         type="button"
                         onClick={(e) => {
@@ -486,6 +490,7 @@ export default function ScriptList({
                       >
                         <Trash2 className="h-4 w-4" />
                       </button>
+                      )}
                     </div>
                   </td>
                 </tr>

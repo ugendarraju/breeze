@@ -69,3 +69,9 @@ Parked alternative: branch `feature/battery-health-agent` collects the same data
 | `apps/api/src/services/mcpCoverage.ts` | `'admin/partnerSignupInvites.ts': { exempt: 'platform_admin' }` |
 | `apps/api/src/system/connections/internalEnvVars.ts` | `PARTNER_SIGNUP_INVITE_ONLY` |
 | `apps/api/src/__tests__/orgSettingsWriters.contract.test.ts` | `verifyEmail.ts` write sites 3 → 4 |
+## Library scripts listed on the Scripts page (fork)
+
+| Path | Change |
+|---|---|
+| `apps/web/src/components/scripts/ScriptsPage.tsx` | Loads the list with `includeSystem: true`; Edit / Duplicate on a built-in script opens Import from Library |
+| `apps/web/src/components/scripts/ScriptList.tsx` | No Edit / Delete buttons on `isSystem` rows (Run and the copy button stay) |

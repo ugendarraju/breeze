@@ -93,7 +93,8 @@ export default function ScriptsPage() {
       // #3301 — walk every page. A bare `/scripts` returns only the first 50,
       // and this page has no pagination controls, so script 51+ was simply
       // unreachable here.
-      const { data } = await fetchAllScripts<ScriptWithDetails>();
+      // fork: list the built-in library scripts too (read-only, runnable).
+      const { data } = await fetchAllScripts<ScriptWithDetails>({ includeSystem: true });
       setScripts(data);
     } catch (err) {
       // fetchAllScripts throws the failed Response (not an Error), so the 401
@@ -149,6 +150,11 @@ export default function ScriptsPage() {
   };
 
   const handleEdit = (script: Script) => {
+    // fork: built-in library scripts are read-only; editing means importing a copy.
+    if (script.isSystem) {
+      void handleOpenLibrary();
+      return;
+    }
     void navigateTo(`/scripts/${script.id}`);
   };
 
@@ -156,6 +162,10 @@ export default function ScriptsPage() {
   // new draft (rather than refreshing the list in place) is the point of
   // duplicating — the user is about to edit it.
   const handleDuplicate = async (script: Script) => {
+    if (script.isSystem) {
+      void handleOpenLibrary(); // fork: a library script's copy is made by importing it
+      return;
+    }
     if (duplicatingId) return;
     setDuplicatingId(script.id);
     try {
