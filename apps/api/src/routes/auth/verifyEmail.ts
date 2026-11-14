@@ -722,7 +722,9 @@ async function finalizePendingRegistration(
 
     // External webhook work is deliberately post-commit: no transition, user,
     // family, or tenant lock is held while another service is contacted.
-    const hookResponse = await dispatchHook('registration', facts.created.partnerId, {
+    // fork: invited technicians skip the registration hook. Its status, banner
+    // and redirect would otherwise override the platform admin's approval gate.
+    const hookResponse = rec.signupInviteId ? null : await dispatchHook('registration', facts.created.partnerId, {
       email: facts.userRow.email,
       partnerName: facts.partnerRow.name,
       plan: facts.partnerRow.plan,

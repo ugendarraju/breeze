@@ -100,6 +100,10 @@ export default function PartnerRegisterPage(_props: PartnerRegisterPageProps = {
     typeof window === 'undefined' ? '' : new URLSearchParams(window.location.hash.slice(1)).get('invite') ?? '',
   );
   useEffect(() => {
+    // Keep the one-time token out of the address bar and browser history.
+    if (inviteToken) window.history.replaceState(null, '', window.location.pathname + window.location.search);
+  }, [inviteToken]);
+  useEffect(() => {
     if (handoff && sessionChecked && gateLoaded && !registrationEnabled) {
       void navigateTo(`/login?reason=registration-disabled&next=${encodeURIComponent(billingPlansUrl)}`);
     }

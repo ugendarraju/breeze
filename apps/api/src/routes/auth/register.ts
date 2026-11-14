@@ -27,7 +27,6 @@ import { getTrustedClientIpOrUndefined } from '../../services/clientIp';
 import {
   claimInvite,
   partnerSignupInviteOnly,
-  releaseInviteClaim,
   type PartnerSignupInviteRecord,
 } from '../../services/partnerSignupInvites';
 import {
@@ -225,7 +224,7 @@ registerRoutes.post('/register-partner', zValidator('json', registerPartnerSchem
   const passwordHash = await hashPassword(password);
 
   // fork: claim the one-time invite. Placed after every input check so a typo
-  // in the form never burns the link; released again if parking fails below.
+  // in the form never burns the link.
   let claimedInvite: PartnerSignupInviteRecord | null = null;
   if (inviteToken) {
     try {
@@ -274,7 +273,9 @@ registerRoutes.post('/register-partner', zValidator('json', registerPartnerSchem
   } catch (err) {
     console.error('[register-partner] pending-registration write failed', err);
     captureException(err, c);
-    if (claimedInvite) await releaseInviteClaim(claimedInvite).catch(() => undefined);
+    // fork: a claimed invite is NOT released here. The write may have landed
+    // even though the client saw an error, and reopening the link could let a
+    // second signup use it. The admin re-issues a link instead.
     await floorPromise;
     return c.json({ error: 'Service temporarily unavailable' }, 503);
   }

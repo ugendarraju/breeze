@@ -39,7 +39,6 @@ vi.mock('../../services/clientIp', () => ({ getTrustedClientIpOrUndefined: vi.fn
 
 vi.mock('../../services/partnerSignupInvites', () => ({
   claimInvite: vi.fn(),
-  releaseInviteClaim: vi.fn(async () => undefined),
   partnerSignupInviteOnly: vi.fn(() => true),
 }));
 
@@ -61,7 +60,7 @@ vi.mock('./schemas', async () => {
 import { registerRoutes } from './register';
 import { hashPassword } from '../../services';
 import { createPendingRegistration } from '../../services/pendingRegistration';
-import { claimInvite, releaseInviteClaim, partnerSignupInviteOnly } from '../../services/partnerSignupInvites';
+import { claimInvite, partnerSignupInviteOnly } from '../../services/partnerSignupInvites';
 
 const VALID_BODY = {
   companyName: 'RK Computers',
@@ -133,12 +132,14 @@ describe('POST /register-partner — invite-only technician signup (fork)', () =
     expect(claimInvite).not.toHaveBeenCalled();
   });
 
-  it('releases the claim when the registration cannot be parked', async () => {
+  it('keeps the link burned when the registration cannot be parked (no second use)', async () => {
     vi.mocked(claimInvite).mockResolvedValueOnce(CLAIMED);
     vi.mocked(createPendingRegistration).mockRejectedValueOnce(new Error('redis down'));
     const res = await post({ ...VALID_BODY, inviteToken: TOKEN });
     expect(res.status).toBe(503);
-    expect(releaseInviteClaim).toHaveBeenCalledWith(CLAIMED);
+    expect(claimInvite).toHaveBeenCalledTimes(1);
+    // The invite service exposes no way to reopen a claimed link (see register.ts).
+    expect(await vi.importActual<Record<string, unknown>>('../../services/partnerSignupInvites')).not.toHaveProperty('releaseInviteClaim');
   });
 
   it('with open signup, a signup without an invite still works', async () => {

@@ -28,9 +28,9 @@ Every upstream file we modify gets a row below, so merge conflicts have a checkl
 |---|---|---|
 | `apps/api/src/routes/admin/index.ts` | Mount `partnerSignupInviteAdminRoutes` at `/partner-invites` | Invite admin API |
 | `apps/api/src/routes/auth/schemas.ts` | Optional `inviteToken` on `registerPartnerSchema` | Invite signup |
-| `apps/api/src/routes/auth/register.ts` | `/register-partner`: refuse without invite when `PARTNER_SIGNUP_INVITE_ONLY`; claim the invite after input checks; release it if parking fails | Invite-only signup |
+| `apps/api/src/routes/auth/register.ts` | `/register-partner`: refuse without invite when `PARTNER_SIGNUP_INVITE_ONLY`; claim the invite after input checks (a claimed link is never reopened) | Invite-only signup |
 | `apps/api/src/services/pendingRegistration.ts` | Optional `signupInviteId` on the pending record | Carries the invite to step 2 |
-| `apps/api/src/routes/auth/verifyEmail.ts` | Refuse invite-less records in invite-only mode; invited partners created `pending` with an approval `statusMessage`; link invite → partner; redirect to `/account/inactive` | Admin approval of invited technicians |
+| `apps/api/src/routes/auth/verifyEmail.ts` | Refuse invite-less records in invite-only mode; invited partners created `pending` with an approval `statusMessage` and skip the `registration` partner hook (it could otherwise activate them); link invite → partner; redirect to `/account/inactive` | Admin approval of invited technicians |
 | `apps/api/src/routes/config.ts` | Top-level `signupInvites.inviteOnly` in `GET /config` (kept out of `registration` so upstream tests stay untouched) | Web gate |
 | `apps/web/src/stores/featuresStore.ts` | `signupInviteOnly` slice; `useRegistrationGate` also returns `inviteOnly` | Web gate |
 | `apps/web/src/stores/auth.ts` | `apiRegisterPartner` optional `inviteToken` arg | Invite signup |

@@ -159,12 +159,12 @@ export async function revokeInvite(id: string): Promise<PartnerSignupInviteView 
   const rec = await getInvite(id);
   if (!rec) return null;
   if (rec.status !== 'open') return toInviteView(rec, now);
-  // Kill the link first: a claim racing this revoke either got the id already
-  // (and the invite reads `used`) or finds the key gone.
-  await requireRedis().del(tokenKey(rec.tokenHash));
-  const latest = (await getInvite(id)) ?? rec;
-  if (latest.status !== 'open') return toInviteView(latest, now);
-  const revoked: PartnerSignupInviteRecord = { ...latest, status: 'revoked', revokedAt: new Date(now).toISOString() };
+  // DEL and a claim's GETDEL race for the same key and Redis runs them one at
+  // a time, so exactly one wins. Only when this DEL removed the key did no
+  // claim get the link, and only then is the invite really revoked.
+  const removed = await requireRedis().del(tokenKey(rec.tokenHash));
+  if (removed === 0) return toInviteView((await getInvite(id)) ?? rec, now);
+  const revoked: PartnerSignupInviteRecord = { ...rec, status: 'revoked', revokedAt: new Date(now).toISOString() };
   await writeRecord(revoked, now);
   return toInviteView(revoked, now);
 }
@@ -194,25 +194,6 @@ export async function claimInvite(
   };
   await writeRecord(used, now);
   return used;
-}
-
-/**
- * Undo a claim when the signup could not be parked (e.g. Redis write failed),
- * so a transient server error does not burn the technician's link.
- */
-export async function releaseInviteClaim(rec: PartnerSignupInviteRecord): Promise<void> {
-  const now = Date.now();
-  const ttl = secondsUntil(rec.expiresAt, now);
-  if (ttl <= 0) return;
-  const reopened: PartnerSignupInviteRecord = {
-    ...rec,
-    status: 'open',
-    usedAt: undefined,
-    usedEmail: undefined,
-    usedCompanyName: undefined,
-  };
-  await writeRecord(reopened, now);
-  await requireRedis().setex(tokenKey(rec.tokenHash), ttl, rec.id);
 }
 
 /** Record which partner the invite produced, once email verification created it. */

@@ -39,7 +39,6 @@ import {
   hashInviteToken,
   listInvites,
   partnerSignupInviteOnly,
-  releaseInviteClaim,
   revokeInvite,
 } from './partnerSignupInvites';
 
@@ -123,14 +122,13 @@ describe('partnerSignupInvites', () => {
     expect(Date.parse(invite.expiresAt) - now.getTime()).toBe(30 * 24 * 3600 * 1000);
   });
 
-  it('releasing a claim reopens the same link', async () => {
+  it('a revoke that loses the race to a claim does not mark the invite revoked', async () => {
     const { token, invite } = await createInvite({ label: 'Ravi', ...ADMIN });
-    const claimed = await claimInvite(token, ATTEMPT);
-    await releaseInviteClaim(claimed!);
-    const reread = await getInvite(invite.id);
-    expect(reread?.status).toBe('open');
-    expect(reread?.usedEmail).toBeUndefined();
-    expect((await claimInvite(token, ATTEMPT))?.id).toBe(invite.id);
+    // The claim has taken the token key but not yet written `used`.
+    store.delete(`partner-invite:token:${hashInviteToken(token)}`);
+    const view = await revokeInvite(invite.id);
+    expect(view?.status).not.toBe('revoked');
+    expect((await getInvite(invite.id))?.status).toBe('open');
   });
 
   it('records the partner the invite produced', async () => {
