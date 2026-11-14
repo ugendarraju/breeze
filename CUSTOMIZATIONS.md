@@ -108,3 +108,14 @@ Windows `software_update` commands are only sent with an exact winget id (never 
 | `apps/api/src/services/aiToolsDeviceSoftware.ts` (+ `aiToolsSoftwareDevice.handlers.test.ts`) | Same rule for `manage_device_software` |
 | `apps/web/src/components/devices/DeviceSoftwareInventory.tsx` (+ `.bulk.test.tsx`) | Sends the bare id; Windows Update disabled with a reason when the id is unknown; bulk summary counts skipped rows |
 | `apps/web/src/locales/*/devices.json` (8 files) | `deviceSoftwareInventory.reasons.noExactPackage`, `deviceSoftwareInventory.bulk.skipped` |
+
+## Software tab: "Close & update" (fork)
+
+Windows rows with an exact winget id get a "Close & update" button (confirm dialog). It dispatches one server-generated PowerShell script (raw script dispatch, SYSTEM, online devices only) that force-stops every process whose executable or a loaded module is in the app's install folder (never itself/its parents/core Windows processes/explorer), then runs `winget upgrade --exact --id <id> --source winget`. The folder comes from InstallLocation or the uninstaller's folder and is refused when too broad. Needs devices.execute + scripts.execute + MFA.
+
+| Path | Change |
+|---|---|
+| `apps/api/src/services/softwareCloseAndUpdate.ts` (+ `.test.ts`) | added: folder derivation/safety checks and the script builder |
+| `apps/api/src/routes/devices/softwareActions.ts` (+ `.test.ts`) | `POST /devices/:id/software/close-and-update` |
+| `apps/web/src/components/devices/DeviceSoftwareInventory.tsx` (+ `.bulk.test.tsx`) | "Close & update" row button + confirm dialog |
+| `apps/web/src/locales/*/devices.json` (8 files) | `deviceSoftwareInventory.closeUpdate.*` |

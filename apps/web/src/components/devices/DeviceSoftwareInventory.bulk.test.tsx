@@ -136,4 +136,31 @@ describe('DeviceSoftwareInventory bulk updates (fork)', () => {
       ),
     );
   });
+
+  // fork: "Close & update" — force-close what uses the app's files, then update.
+  it('Close & update asks for confirmation, then posts the exact id to close-and-update', async () => {
+    setup(() => true, EXACT_FIXTURE);
+    await screen.findByText('OBS Studio');
+    // Only rows that can be updated get the button.
+    expect(screen.queryByTestId('software-close-update-sw-mystery')).toBeNull();
+
+    fireEvent.click(screen.getByTestId('software-close-update-sw-obs'));
+    expect(screen.getByText(/Unsaved work in those programs will be lost/)).toBeTruthy();
+    expect(fetchMock.mock.calls.some(([u]) => String(u).includes('close-and-update'))).toBe(false);
+
+    fireEvent.click(screen.getByTestId('confirm-close-update'));
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        `/devices/${deviceId}/software/close-and-update`,
+        expect.objectContaining({ method: 'POST', body: JSON.stringify({ name: 'OBS Studio', packageId: 'OBSProject.OBSStudio' }) }),
+      ),
+    );
+  });
+
+  it('Close & update is not offered off Windows', async () => {
+    fetchMock.mockImplementation(async () => json(EXACT_FIXTURE));
+    render(<DeviceSoftwareInventory deviceId={deviceId} osType="linux" />);
+    await screen.findByText('OBS Studio');
+    expect(screen.queryByTestId('software-close-update-sw-obs')).toBeNull();
+  });
 });

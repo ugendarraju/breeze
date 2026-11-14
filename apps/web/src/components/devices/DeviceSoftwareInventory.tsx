@@ -10,7 +10,8 @@ import {
   ArrowUpCircle,
   Trash2,
   Loader2,
-  AlertTriangle
+  AlertTriangle,
+  Power
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { fetchWithAuth } from '../../stores/auth';
@@ -69,7 +70,13 @@ type DeviceSoftwareInventoryProps = {
   osType?: string;
 };
 
-type SoftwareAction = 'update' | 'uninstall';
+// fork: 'closeUpdate' = force-close what uses the app's files, then update (Windows).
+type SoftwareAction = 'update' | 'uninstall' | 'closeUpdate';
+const ACTION_PATH: Record<SoftwareAction, string> = {
+  update: 'update',
+  uninstall: 'uninstall',
+  closeUpdate: 'close-and-update',
+};
 
 // We block update/uninstall for Apple-published macOS apps because their
 // package-manager identity (Apple-signed App Store / OS components) is not
@@ -163,6 +170,8 @@ export default function DeviceSoftwareInventory({ deviceId, timezone, osType }: 
   // queues directly, since the worst case is a silent no-op when the package
   // is already current.
   const [confirmState, setConfirmState] = useState<ConfirmState | null>(null);
+  // fork: confirm dialog for "Close & update".
+  const [closeConfirm, setCloseConfirm] = useState<{ rowId: string; name: string; packageId: string | null } | null>(null);
   // fork: "Updates only" filter + bulk update
   const [updatesOnly, setUpdatesOnly] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -219,27 +228,30 @@ export default function DeviceSoftwareInventory({ deviceId, timezone, osType }: 
       setPendingActions((prev) => ({ ...prev, [rowId]: action }));
       const verb = action === 'update'
         ? t('deviceSoftwareInventory.actions.update')
-        : t('deviceSoftwareInventory.actions.uninstall');
+        : action === 'closeUpdate'
+          ? t('deviceSoftwareInventory.closeUpdate.action')
+          : t('deviceSoftwareInventory.actions.uninstall');
       // Updates send the winget packageId (when known) so the agent upgrades by
       // --id, and never pin a version — we always want the latest available.
       // Only a winget-shaped id is forwarded: the third_party patch bucket also
       // carries Homebrew ids like "homebrew:cask:foo" whose colons the API
       // rejects — those fall back to a name-based upgrade (which brew uses anyway).
       const body: Record<string, string> = { name };
-      if (action === 'update') {
+      if (action === 'update' || action === 'closeUpdate') {
         const packageId = wingetIdFor(opts?.packageId);
         if (packageId) body.packageId = packageId;
       } else if (version) {
         body.version = version;
       }
-      const successMessage =
-        action === 'update' && opts?.availableVersion
+      const successMessage = action === 'closeUpdate'
+        ? t('deviceSoftwareInventory.closeUpdate.queued', { name })
+        : action === 'update' && opts?.availableVersion
           ? t('deviceSoftwareInventory.toasts.updateVersionQueued', { version: opts.availableVersion, name })
           : t('deviceSoftwareInventory.toasts.actionQueued', { action: verb, name });
       try {
         await runAction({
           request: () =>
-            fetchWithAuth(`/devices/${deviceId}/software/${action}`, {
+            fetchWithAuth(`/devices/${deviceId}/software/${ACTION_PATH[action]}`, {
               method: 'POST',
               body: JSON.stringify(body),
             }),
@@ -398,6 +410,7 @@ export default function DeviceSoftwareInventory({ deviceId, timezone, osType }: 
   };
 
   const isMac = osType?.toLowerCase() === 'macos' || osType?.toLowerCase() === 'darwin';
+  const isWindows = osType?.toLowerCase() === 'windows';
   const hasActiveFilters = search || publisherFilter !== 'all' || typeFilter !== 'all' || updatesOnly;
   const updatesAvailableCount = useMemo(
     () => rows.filter((r) => r.updateAvailable).length,
@@ -679,6 +692,25 @@ export default function DeviceSoftwareInventory({ deviceId, timezone, osType }: 
                             )}
                             {t('deviceSoftwareInventory.actions.update')}
                           </button>
+                          {isWindows && item.capabilities.update.allowed && (
+                            <button
+                              type="button"
+                              data-testid={`software-close-update-${item.id}`}
+                              disabled={anyPending}
+                              title={t('deviceSoftwareInventory.closeUpdate.title')}
+                              onClick={() =>
+                                setCloseConfirm({ rowId: item.id, name: item.name, packageId: item.updatePackageId })
+                              }
+                              className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {pendingActions[item.id] === 'closeUpdate' ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <Power className="h-3.5 w-3.5" />
+                              )}
+                              {t('deviceSoftwareInventory.closeUpdate.action')}
+                            </button>
+                          )}
                           <button
                             type="button"
                             data-testid={`software-uninstall-${item.id}`}
@@ -807,6 +839,57 @@ export default function DeviceSoftwareInventory({ deviceId, timezone, osType }: 
                 className="rounded-md bg-destructive px-3 py-1.5 text-sm font-medium text-destructive-foreground hover:opacity-90"
               >
                 {t('deviceSoftwareInventory.actions.uninstall')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* fork: "Close & update" confirmation */}
+      {closeConfirm && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="software-close-update-title"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setCloseConfirm(null);
+          }}
+        >
+          <div className="w-full max-w-md rounded-lg border bg-card p-6 shadow-lg">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="h-5 w-5 shrink-0 text-amber-500" />
+              <div className="flex-1">
+                <h4 id="software-close-update-title" className="text-base font-semibold">
+                  {t('deviceSoftwareInventory.closeUpdate.confirmTitle', { name: closeConfirm.name })}
+                </h4>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {t('deviceSoftwareInventory.closeUpdate.confirmMessage', { name: closeConfirm.name })}
+                </p>
+                <p className="mt-2 text-sm text-muted-foreground">
+                  {t('deviceSoftwareInventory.closeUpdate.confirmHint')}
+                </p>
+              </div>
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setCloseConfirm(null)}
+                className="rounded-md border px-3 py-1.5 text-sm hover:bg-muted"
+              >
+                {t('common:actions.cancel')}
+              </button>
+              <button
+                type="button"
+                data-testid="confirm-close-update"
+                onClick={() => {
+                  const { rowId, name, packageId } = closeConfirm;
+                  setCloseConfirm(null);
+                  void queueSoftwareAction(rowId, 'closeUpdate', name, '', { packageId });
+                }}
+                className="rounded-md bg-amber-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-amber-700"
+              >
+                {t('deviceSoftwareInventory.closeUpdate.action')}
               </button>
             </div>
           </div>

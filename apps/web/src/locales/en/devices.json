@@ -2492,6 +2492,14 @@
     "purchaseDateVendorHint": "Set from the manufacturer’s ship date. Enter a date to override it."
   },
   "deviceSoftwareInventory": {
+    "closeUpdate": {
+      "action": "Close & update",
+      "title": "Force-close the app and anything using its files, then update",
+      "confirmTitle": "Close {{name}} and update?",
+      "confirmMessage": "Breeze will force-close {{name}} and any other program using its files on this device, then install the update. That can include apps like Teams, Zoom or a browser. Unsaved work in those programs will be lost.",
+      "confirmHint": "Use this only when nobody is working on the device, or after they have saved their work.",
+      "queued": "Closing \"{{name}}\" and updating"
+    },
     "actions": {
       "uninstall": "Uninstall",
       "update": "Update"

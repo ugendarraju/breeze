@@ -2492,6 +2492,14 @@
     "purchaseDateVendorHint": "Ricavata dalla data di spedizione del produttore. Inserisci una data per sovrascriverla."
   },
   "deviceSoftwareInventory": {
+    "closeUpdate": {
+      "action": "Chiudi e aggiorna",
+      "title": "Chiudi forzatamente l’app e tutto ciò che usa i suoi file, poi aggiorna",
+      "confirmTitle": "Chiudere {{name}} e aggiornare?",
+      "confirmMessage": "Breeze chiuderà forzatamente {{name}} e qualsiasi altro programma che usa i suoi file su questo dispositivo, poi installerà l’aggiornamento. Possono essere incluse app come Teams, Zoom o un browser. Il lavoro non salvato in quei programmi andrà perso.",
+      "confirmHint": "Usalo solo quando nessuno sta lavorando sul dispositivo o dopo che il lavoro è stato salvato.",
+      "queued": "Chiusura di \"{{name}}\" e aggiornamento"
+    },
     "actions": {
       "uninstall": "Disinstalla",
       "update": "Aggiorna"

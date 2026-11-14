@@ -2492,6 +2492,14 @@
     "purchaseDateVendorHint": "Üreticinin sevk tarihinden alındı. Üzerine yazmak için bir tarih girin."
   },
   "deviceSoftwareInventory": {
+    "closeUpdate": {
+      "action": "Kapat ve güncelle",
+      "title": "Uygulamayı ve dosyalarını kullanan her şeyi zorla kapatıp güncelle",
+      "confirmTitle": "{{name}} kapatılıp güncellensin mi?",
+      "confirmMessage": "Breeze, {{name}} uygulamasını ve bu cihazda dosyalarını kullanan diğer tüm programları zorla kapatıp güncellemeyi yükleyecek. Buna Teams, Zoom veya bir tarayıcı gibi uygulamalar dahil olabilir. Bu programlardaki kaydedilmemiş çalışmalar kaybolur.",
+      "confirmHint": "Yalnızca cihazda kimse çalışmıyorsa veya çalışmalar kaydedildiyse kullanın.",
+      "queued": "\"{{name}}\" kapatılıp güncelleniyor"
+    },
     "actions": {
       "uninstall": "Kaldır",
       "update": "Güncelle"
