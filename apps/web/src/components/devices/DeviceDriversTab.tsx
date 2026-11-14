@@ -227,7 +227,7 @@ export default function DeviceDriversTab({ deviceId, timezone }: { deviceId: str
   const install = data.install;
   const scanRunning = isActive(data.scan);
   const installRunning = isActive(install) || isActive(data.toolInstall);
-  const when = (iso: string | null | undefined) => (iso ? formatDateTime(iso, timezone) : '');
+  const when = (iso: string | null | undefined) => (iso ? formatDateTime(iso, { timeZone: timezone }) : '');
   const oemFailed = (r: string | null | undefined) => r === 'failed' || r === 'error' || r === 'tool_not_found';
 
   return (
