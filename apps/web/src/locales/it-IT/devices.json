@@ -5057,5 +5057,54 @@
       "previousPage": "Precedente",
       "nextPage": "Successivo"
     }
+  },
+  "deviceHelp": {
+    "panel": {
+      "title": "Link di assistenza",
+      "description": "Chi usa questo computer può aprire questo link per inviarti un ticket senza account. Il ticket è collegato a questo dispositivo.",
+      "loading": "Caricamento del link di assistenza…",
+      "loadFailed": "Impossibile caricare il link di assistenza.",
+      "disabled": "Il link di assistenza di questo dispositivo è disattivato.",
+      "copy": "Copia link",
+      "copied": "Link copiato",
+      "copyFailed": "Impossibile copiare il link",
+      "rotate": "Nuovo link",
+      "rotateConfirm": "Creare un nuovo link? Il link attuale e ogni collegamento sul desktop che lo usa smetteranno di funzionare finché il collegamento non viene reinstallato.",
+      "rotated": "Nuovo link di assistenza creato",
+      "rotateFailed": "Impossibile creare un nuovo link",
+      "disable": "Disattiva",
+      "disableConfirm": "Disattivare il link di assistenza? Nessuno potrà inviare ticket con il link di questo computer finché non ne crei uno nuovo.",
+      "disabledToast": "Link di assistenza disattivato",
+      "disableFailed": "Impossibile disattivare il link di assistenza",
+      "enable": "Attiva con un nuovo link",
+      "install": "Installa collegamento sul desktop",
+      "installed": "Installazione del collegamento inviata al dispositivo",
+      "installFailed": "Impossibile inviare l’installazione del collegamento",
+      "installUnsupported": "Non esiste uno script di collegamento per il sistema operativo di questo dispositivo."
+    },
+    "form": {
+      "title": "Chiedi assistenza",
+      "intro": "Spiega il problema al tuo supporto IT. Ti ricontatteranno.",
+      "checking": "Verifica del link di assistenza…",
+      "invalid": "Questo link di assistenza non è più valido. Contatta il tuo supporto IT in un altro modo.",
+      "loadFailed": "Impossibile raggiungere il servizio di assistenza. Controlla la connessione a internet e riprova.",
+      "retry": "Riprova",
+      "name": "Il tuo nome",
+      "phone": "Numero di telefono per richiamarti",
+      "company": "Nome dell’azienda",
+      "email": "Indirizzo e-mail",
+      "details": "Qual è il problema?",
+      "detailsHint": "Cosa stavi facendo, cosa non ha funzionato e qualsiasi messaggio di errore visualizzato.",
+      "screenshot": "Screenshot dell’errore (facoltativo)",
+      "screenshotHint": "PNG, JPEG o WebP, fino a 10 MB.",
+      "screenshotTooLarge": "L’immagine supera i 10 MB.",
+      "screenshotWrongType": "Scegli un’immagine PNG, JPEG o WebP.",
+      "submit": "Invia al supporto IT",
+      "sending": "Invio in corso…",
+      "sentWithNumber": "La tua richiesta è stata inviata. Il tuo riferimento è {{number}}.",
+      "sentPlain": "La tua richiesta è stata inviata. Il supporto IT ti contatterà presto.",
+      "failed": "Impossibile inviare la richiesta. Riprova.",
+      "another": "Invia un’altra richiesta"
+    }
   }
 }
