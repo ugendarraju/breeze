@@ -1547,6 +1547,10 @@ heartbeatRoutes.post('/:id/heartbeat', bodyLimit({ maxSize: 5 * 1024 * 1024, onE
       ...(data.battery.pluggedIn !== undefined ? { pluggedIn: data.battery.pluggedIn } : {}),
       ...(data.battery.timeRemainingMinutes !== undefined ? { timeRemainingMinutes: data.battery.timeRemainingMinutes } : {}),
       ...(data.battery.timeToFullMinutes !== undefined ? { timeToFullMinutes: data.battery.timeToFullMinutes } : {}),
+      // fork: battery health
+      ...(data.battery.designCapacityMwh !== undefined ? { designCapacityMwh: data.battery.designCapacityMwh } : {}),
+      ...(data.battery.fullChargeCapacityMwh !== undefined ? { fullChargeCapacityMwh: data.battery.fullChargeCapacityMwh } : {}),
+      ...(data.battery.cycleCount !== undefined ? { cycleCount: data.battery.cycleCount } : {}),
       reportedAt: new Date().toISOString(),
     };
     deviceUpdates.batteryStatus = battery;

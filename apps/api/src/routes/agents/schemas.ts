@@ -383,6 +383,10 @@ export const heartbeatSchema = z.object({
     pluggedIn: z.boolean().optional().catch(undefined),
     timeRemainingMinutes: z.number().int().min(0).optional().catch(undefined),
     timeToFullMinutes: z.number().int().min(0).optional().catch(undefined),
+    // fork: battery health (mWh / cycles). A bad value drops only that field.
+    designCapacityMwh: z.number().int().min(1).max(10_000_000).optional().catch(undefined),
+    fullChargeCapacityMwh: z.number().int().min(1).max(10_000_000).optional().catch(undefined),
+    cycleCount: z.number().int().min(1).max(1_000_000).optional().catch(undefined),
   }).optional().catch(undefined),
   // Agent's own Go runtime memory gauges (#2389). Informational — a bad value
   // drops the whole object (.catch) rather than 400-ing the heartbeat.

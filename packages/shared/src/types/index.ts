@@ -204,6 +204,12 @@ export interface BatteryStatus {
   timeRemainingMinutes?: number;
   /** Estimated time to full charge, in minutes, when the OS reports it. */
   timeToFullMinutes?: number;
+  /** fork: battery health. Capacity the battery was built for, in mWh. */
+  designCapacityMwh?: number;
+  /** fork: what the battery holds today when fully charged, in mWh. */
+  fullChargeCapacityMwh?: number;
+  /** fork: charge cycles, when the firmware reports them. */
+  cycleCount?: number;
   /** ISO timestamp the API stamped when it ingested this snapshot. */
   reportedAt: string;
 }

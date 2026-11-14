@@ -33,8 +33,10 @@ import (
 //     is why a read error must NOT be collapsed to Present:false — that would
 //     overwrite a real laptop's last-known snapshot with a bogus "no battery".
 //
-// Battery HEALTH (design/full capacity, cycle count, condition) is intentionally
-// out of scope for v1 — this is operational current state only.
+// fork: battery HEALTH (design / full-charge capacity, cycle count) rides along
+// as optional fields. It changes over weeks, so platforms where it is costly to
+// read (Windows WMI) refresh it in the background and send a cached value;
+// see applyPlatformBatteryHealth.
 
 // BatteryChargingState is the closed charging-state vocabulary. Mirrors the
 // BatteryChargingState union in packages/shared and the Zod enum in the API
@@ -59,6 +61,10 @@ type BatteryInfo struct {
 	PluggedIn            *bool                `json:"pluggedIn,omitempty"`
 	TimeRemainingMinutes *int                 `json:"timeRemainingMinutes,omitempty"`
 	TimeToFullMinutes    *int                 `json:"timeToFullMinutes,omitempty"`
+	// fork: battery health. Capacities in mWh; omitted when not reported.
+	DesignCapacityMwh     *int `json:"designCapacityMwh,omitempty"`
+	FullChargeCapacityMwh *int `json:"fullChargeCapacityMwh,omitempty"`
+	CycleCount            *int `json:"cycleCount,omitempty"`
 }
 
 // powerSupplyRoot is the Linux sysfs power-supply directory. A package-level
@@ -68,7 +74,47 @@ var powerSupplyRoot = "/sys/class/power_supply"
 // CollectBattery returns the current power state, or nil when the platform
 // cannot determine it (so the heartbeat omits the field entirely).
 func (c *HardwareCollector) CollectBattery() *BatteryInfo {
-	return collectPlatformBattery()
+	info := collectPlatformBattery()
+	if info != nil && info.Present {
+		applyPlatformBatteryHealth(info) // fork: battery health
+	}
+	return info
+}
+
+// positiveIntPtr returns nil for a non-positive reading: firmware reports 0
+// for "unknown" capacity or cycle count far more often than a real zero.
+func positiveIntPtr(v float64) *int {
+	if v <= 0 {
+		return nil
+	}
+	return intPtr(int(v + 0.5))
+}
+
+// linuxBatteryHealth reads design / full-charge capacity (mWh) and cycle count
+// from a power_supply battery dir. energy_* are µWh; charge_* are µAh and are
+// converted with voltage_min_design (µV). Anything unreadable stays nil.
+func linuxBatteryHealth(dir string, info *BatteryInfo) {
+	design, haveDesign := readSysFloat(filepath.Join(dir, "energy_full_design"))
+	full, haveFull := readSysFloat(filepath.Join(dir, "energy_full"))
+	scale := 1.0 / 1000 // µWh -> mWh
+	if !haveDesign || !haveFull {
+		volts, haveVolts := readSysFloat(filepath.Join(dir, "voltage_min_design"))
+		design, haveDesign = readSysFloat(filepath.Join(dir, "charge_full_design"))
+		full, haveFull = readSysFloat(filepath.Join(dir, "charge_full"))
+		if !haveVolts {
+			haveDesign, haveFull = false, false
+		}
+		scale = volts / 1e9 // µAh * µV / 1e9 = mWh
+	}
+	if haveDesign {
+		info.DesignCapacityMwh = positiveIntPtr(design * scale)
+	}
+	if haveFull {
+		info.FullChargeCapacityMwh = positiveIntPtr(full * scale)
+	}
+	if cycles, ok := readSysFloat(filepath.Join(dir, "cycle_count")); ok {
+		info.CycleCount = positiveIntPtr(cycles)
+	}
 }
 
 // floatPtr / intPtr / boolPtr are small helpers so platform collectors can set
@@ -362,6 +408,8 @@ func collectBatteryFromSysfs(root string) *BatteryInfo {
 			} else {
 				info.ChargingState = batteryStateUnknown
 			}
+
+			linuxBatteryHealth(dir, &info) // fork: battery health
 
 			// Time estimate from energy/power (µWh/µW) or charge/current (µAh/µA).
 			reservoirNow, haveNow := readSysFloat(filepath.Join(dir, "energy_now"))
