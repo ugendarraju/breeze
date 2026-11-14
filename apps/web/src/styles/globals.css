@@ -34252,6 +34252,27 @@
   select {
     padding-right: 1.75rem !important;
   }
+
+  /* Fixed-height selects: the forms plugin's 0.5rem block padding leaves an
+     h-7/h-8/h-9 select less room than one line of text, clipping it at the
+     bottom. Zero it so the height alone sizes the box; an explicit py-*
+     utility still wins (higher specificity). */
+  select:where(.h-6, .h-7, .h-8, .h-9, .h-10) {
+    padding-block: 0;
+  }
+
+  /* Sticky table headers tinted with a translucent bg-muted/NN let scrolled
+     rows show through. Keep the same tint, mixed onto the card colour so it
+     is opaque, and lift the header above positioned cell content. */
+  thead.sticky {
+    z-index: 10;
+  }
+  thead.sticky.bg-muted\/40 {
+    background-color: color-mix(in oklab, hsl(var(--muted)) 40%, hsl(var(--card)));
+  }
+  thead.sticky.bg-muted\/30 {
+    background-color: color-mix(in oklab, hsl(var(--muted)) 30%, hsl(var(--card)));
+  }
 }
 
 @layer base {
