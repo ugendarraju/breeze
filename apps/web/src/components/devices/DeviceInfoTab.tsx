@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { batteryHealthFromCustomFields } from "./batteryHealth";
 import {
   Monitor,
   Cpu,
@@ -1223,6 +1224,28 @@ export default function DeviceInfoTab({ deviceId }: DeviceInfoTabProps) {
               )}
             />
           )}
+          {(() => {
+            // fork: battery health written by the "Battery Health (Windows)"
+            // script into device custom fields (services/batteryHealthScript.ts).
+            const health = batteryHealthFromCustomFields(info.customFields);
+            if (!health) return null;
+            return (
+              <>
+                {health.healthPercent !== null && (
+                  <InfoRow label={t("deviceInfoTab.batteryHealth")} value={`${health.healthPercent}%`} />
+                )}
+                {health.designMwh !== null && (
+                  <InfoRow label={t("deviceInfoTab.designCapacity")} value={`${formatNumber(health.designMwh)} mWh`} />
+                )}
+                {health.fullMwh !== null && (
+                  <InfoRow label={t("deviceInfoTab.fullChargeCapacity")} value={`${formatNumber(health.fullMwh)} mWh`} />
+                )}
+                {health.cycles !== null && (
+                  <InfoRow label={t("deviceInfoTab.chargeCycles")} value={formatNumber(health.cycles)} />
+                )}
+              </>
+            );
+          })()}
           <InfoRow
             label={t("deviceInfoTab.lastReported")}
             value={formatDate(info.batteryStatus.reportedAt)}

@@ -18,6 +18,7 @@ import {
 } from './queries';
 import { requestLikeFromSnapshot, writeAuditEventAsync } from '../auditEvents';
 import type { ScriptCustomFieldWriteSummary } from '../../db/schema/scripts';
+import { evaluateBatteryHealthAlertSafely } from '../batteryHealthAlerts'; // fork
 
 export type CustomFieldWriteRejection =
   | 'unknown_field'
@@ -156,6 +157,8 @@ export async function applyScriptCustomFieldWrites(
   // here and re-raise it as `device_not_found` — do not reintroduce a
   // pre-flight existence check, which would only move the race.
   await persistDeviceCustomFieldValues(device.id, device.orgId, writes, 'script');
+
+  await evaluateBatteryHealthAlertSafely(device, writes); // fork: low-battery-health alert
 
   // Audited even when every upsert was skipped as unchanged: the script
   // asserted these values and that assertion is the auditable event. Keys only —

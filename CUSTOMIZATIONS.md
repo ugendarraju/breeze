@@ -27,3 +27,21 @@ Every upstream file we modify gets a row below, so merge conflicts have a checkl
 ## Operational notes (not in git)
 
 - The partner directory needs a **system-scope platform admin**: `is_platform_admin = true` and **no** `partner_users` / `organization_users` rows. Breeze has no UI to create one; it is inserted with SQL. A partner-member platform admin (e.g. `admin@breeze.local`) gets a 403 there by design.
+
+## Battery health (fork)
+
+Per-OS system scripts read laptop battery health and save it as device custom fields; the Power section shows it, and a low reading raises an alert. Uses the official signed agent (no agent change).
+
+| Path | Kind | What |
+|---|---|---|
+| `apps/api/src/services/batteryHealthScript.ts` (+ `.test.ts`) | added | "Battery Health (Windows / macOS / Linux)" system library scripts; write-back field keys |
+| `apps/api/src/services/batteryHealthProvisioning.ts` | added | Per partner, once (Redis set `fork:battery-health:provisioned-partners`): 3 number custom fields (`scriptWrite`) + one monthly partner-wide automation per OS, filtered to that OS. Runs at API boot and hourly |
+| `apps/api/src/services/batteryHealthAlerts.ts` (+ `.test.ts`) | added | Health < 50% → rule-less alert via `createSourcedAlert` (`configItemName: battery_health`); auto-resolves at ≥ 50%; dismissal respected |
+| `apps/web/src/components/devices/batteryHealth.ts` (+ `.test.ts`) | added | Health % / capacities from custom fields |
+| `apps/api/src/services/systemScriptLibrary.ts` | modified | `...FORK_SYSTEM_LIBRARY_SCRIPTS` at the end of `SYSTEM_LIBRARY_SCRIPTS` |
+| `apps/api/src/index.ts` | modified | `startBatteryHealthProvisioning()` after `ensureSystemLibraryScripts` |
+| `apps/api/src/services/customFields/scriptWriteBack.ts` | modified | `evaluateBatteryHealthAlertSafely(device, writes)` after values are persisted |
+| `apps/web/src/components/devices/DeviceInfoTab.tsx` | modified | Battery Health / Design Capacity / Full Charge Capacity / Charge Cycles rows in the Power section |
+| `apps/web/src/locales/*/devices.json` (8 files) | modified | `deviceInfoTab.batteryHealth`, `designCapacity`, `fullChargeCapacity`, `chargeCycles` |
+
+Parked alternative: branch `feature/battery-health-agent` collects the same data in the agent itself (needs our own signed agent builds).

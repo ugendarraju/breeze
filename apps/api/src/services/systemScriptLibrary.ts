@@ -25,6 +25,7 @@ import { db } from '../db';
 import { scripts } from '../db/schema';
 import { clearedScriptSecurityAcknowledgementColumns } from './scriptSecurityAcknowledgement';
 import { cutScriptVersion } from './scriptVersions';
+import { FORK_SYSTEM_LIBRARY_SCRIPTS } from './batteryHealthScript';
 
 export type SystemLibraryScriptDefinition = {
   name: string;
@@ -624,6 +625,7 @@ export const SYSTEM_LIBRARY_SCRIPTS: SystemLibraryScriptDefinition[] = [
     timeoutSeconds: 300,
     runAs: 'system',
   },
+  ...FORK_SYSTEM_LIBRARY_SCRIPTS, // fork: services/batteryHealthScript.ts
 ];
 
 /**
