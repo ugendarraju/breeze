@@ -23,6 +23,7 @@ Every upstream file we modify gets a row below, so merge conflicts have a checkl
 |---|---|---|
 | `apps/web/src/components/layout/Sidebar.tsx` | One `Partners` item at the top of the `administration` section | Sidebar link to `/admin/partners` |
 | `apps/web/src/locales/*/common.json` (8 files) | `nav.partnersAdmin` key next to `nav.deletionRequests` | `Sidebar.nav.test.tsx` requires every nav item to have a translated key |
+| `apps/web/src/components/devices/DeviceDetails.tsx` | Header icon uses `getDeviceRoleIcon(device.deviceRole)` (Monitor when unknown) | Servers, printers etc. no longer all show a monitor |
 
 ## Operational notes (not in git)
 
