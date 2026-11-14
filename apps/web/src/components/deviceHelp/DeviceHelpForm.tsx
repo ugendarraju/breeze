@@ -141,24 +141,28 @@ export default function DeviceHelpForm() {
             {t('deviceHelp.form.email')}
             <input name="email" type="email" required maxLength={254} autoComplete="email" className={inputClass} />
           </label>
-          <label className="block text-sm font-medium">
-            {t('deviceHelp.form.details')}
-            <textarea name="details" required minLength={5} maxLength={5000} rows={5} className={inputClass} aria-describedby="device-help-details-hint" />
-            <span id="device-help-details-hint" className="mt-1 block text-xs font-normal text-muted-foreground">{t('deviceHelp.form.detailsHint')}</span>
-          </label>
-          <label className="block text-sm font-medium">
-            {t('deviceHelp.form.screenshot')}
-            <input
-              name="screenshot"
-              type="file"
-              accept="image/png,image/jpeg,image/webp"
-              className="mt-1 block w-full text-sm"
-              aria-describedby="device-help-screenshot-hint"
-              onChange={(e) => onScreenshotChange(e.target.files?.[0])}
-            />
-            <span id="device-help-screenshot-hint" className="mt-1 block text-xs font-normal text-muted-foreground">{t('deviceHelp.form.screenshotHint')}</span>
-            {screenshotError && <span role="alert" className="mt-1 block text-xs text-destructive">{screenshotError}</span>}
-          </label>
+          <div>
+            <label className="block text-sm font-medium">
+              {t('deviceHelp.form.details')}
+              <textarea name="details" required minLength={5} maxLength={5000} rows={5} className={inputClass} aria-describedby="device-help-details-hint" />
+            </label>
+            <p id="device-help-details-hint" className="mt-1 text-xs text-muted-foreground">{t('deviceHelp.form.detailsHint')}</p>
+          </div>
+          <div>
+            <label className="block text-sm font-medium">
+              {t('deviceHelp.form.screenshot')}
+              <input
+                name="screenshot"
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                className="mt-1 block w-full text-sm"
+                aria-describedby="device-help-screenshot-hint"
+                onChange={(e) => onScreenshotChange(e.target.files?.[0])}
+              />
+            </label>
+            <p id="device-help-screenshot-hint" className="mt-1 text-xs text-muted-foreground">{t('deviceHelp.form.screenshotHint')}</p>
+            {screenshotError && <p role="alert" className="mt-1 text-xs text-destructive">{screenshotError}</p>}
+          </div>
           <button
             type="submit"
             disabled={busy || Boolean(screenshotError)}

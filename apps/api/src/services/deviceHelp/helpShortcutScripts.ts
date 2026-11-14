@@ -41,7 +41,8 @@ if ($Action -eq 'remove') {
 }
 if ($Action -ne 'install') { Write-Output "Unknown action '$Action' (use install or remove)."; exit 1 }
 
-if ($Url -cnotmatch '${SHELL_HELP_URL_ERE}') {
+# .NET '$' also matches before a trailing newline, so CR/LF are refused explicitly.
+if ($Url -match '[\\r\\n]' -or $Url -cnotmatch '${SHELL_HELP_URL_ERE}') {
   Write-Output 'help_url is missing or is not a Breeze help link (https://.../help#...). Nothing changed.'
   exit 1
 }
@@ -60,7 +61,9 @@ url="$BREEZE_PARAM_HELP_URL"
 action=$(printf '%s' "\${BREEZE_PARAM_ACTION:-install}" | tr '[:upper:]' '[:lower:]')
 name='Get help.webloc'
 case "$action" in install|remove) ;; *) echo "Unknown action '$action' (use install or remove)."; exit 1 ;; esac
-if [ "$action" = install ] && ! printf '%s' "$url" | grep -Eq '${SHELL_HELP_URL_ERE}'; then
+# [[ =~ ]] matches the WHOLE value (a CR/LF fails the character classes); grep would match line by line.
+re='${SHELL_HELP_URL_ERE}'
+if [ "$action" = install ] && ! [[ "$url" =~ $re ]]; then
   echo 'help_url is missing or is not a Breeze help link (https://.../help#...). Nothing changed.'; exit 1
 fi
 count=0
@@ -79,7 +82,7 @@ for home in /Users/*; do
 <plist version="1.0"><dict><key>URL</key><string>$url</string></dict></plist>
 EOF
   chown "$user" "$file" 2>/dev/null
-  chmod 644 "$file"
+  chmod u=rw,go=r "$file"
   count=$((count + 1))
 done
 echo "Get help shortcut: $action on $count desktop(s)."
@@ -94,7 +97,9 @@ url="$BREEZE_PARAM_HELP_URL"
 action=$(printf '%s' "\${BREEZE_PARAM_ACTION:-install}" | tr '[:upper:]' '[:lower:]')
 name='get-help.desktop'
 case "$action" in install|remove) ;; *) echo "Unknown action '$action' (use install or remove)."; exit 1 ;; esac
-if [ "$action" = install ] && ! printf '%s' "$url" | grep -Eq '${SHELL_HELP_URL_ERE}'; then
+# [[ =~ ]] matches the WHOLE value (a CR/LF fails the character classes); grep would match line by line.
+re='${SHELL_HELP_URL_ERE}'
+if [ "$action" = install ] && ! [[ "$url" =~ $re ]]; then
   echo 'help_url is missing or is not a Breeze help link (https://.../help#...). Nothing changed.'; exit 1
 fi
 count=0
@@ -110,7 +115,7 @@ for home in /home/*; do
   fi
   printf '[Desktop Entry]\\nType=Link\\nName=Get help\\nIcon=help-browser\\nURL=%s\\n' "$url" > "$file"
   chown "$user": "$file" 2>/dev/null
-  chmod 755 "$file"
+  chmod u=rwx,go=rx "$file"
   count=$((count + 1))
 done
 echo "Get help shortcut: $action on $count desktop(s)."

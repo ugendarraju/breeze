@@ -83,3 +83,30 @@ Parked alternative: branch `feature/battery-health-agent` collects the same data
 | `apps/web/src/components/devices/DeviceSoftwareInventory.tsx` | "Updates only" toggle, row checkboxes on updatable rows, "Select all with updates", "Update selected (N)" (sequential, one summary toast); `queueSoftwareAction` gains `quiet` and returns success |
 | `apps/web/src/components/devices/DeviceSoftwareInventory.bulk.test.tsx` | added: tests for the above |
 | `apps/web/src/locales/*/devices.json` (8 files) | `deviceSoftwareInventory.bulk.*` |
+## Get help link: account-less tickets from a managed computer (fork)
+
+The person at a managed computer opens a per-device link (`/help#<token>`, usually from a "Get help" desktop shortcut) and sends a ticket with name, phone, company, email, problem and an optional screenshot. No account. The ticket lands on the device's org, linked to the device (queue and the device Tickets tab). No agent or helper change.
+
+- **Token**: derived, never stored: `base64url(deviceId | version | HMAC(secret-derived key, deviceId:version))`. Technicians can re-display it any time. Rotate/disable state is a Redis hash `fork:device-help:<deviceId>` (`v`, `off`); no hash means v1, enabled. No table, no migration.
+- **Public API** (`/api/v1/device-help/public/{check,submit}`): token in the body, never the URL; returns no tenant data; per-IP and per-device rate limits; one PNG/JPEG/WebP (sniffed) up to 10 MB.
+- **Ticket**: `createTicket` with system actor "Get help form" (source `api`, requester name/email; phone/company in the description); the screenshot goes on one public comment as a normal ticket attachment.
+
+| Path | Kind | What |
+|---|---|---|
+| `apps/api/src/services/deviceHelp/helpLinkToken.ts` (+ `.test.ts`) | added | Mint/verify the link, rotate/disable state |
+| `apps/api/src/services/deviceHelp/helpTicket.ts` (+ `.test.ts`) | added | Form -> ticket + screenshot attachment |
+| `apps/api/src/services/deviceHelp/helpShortcutScripts.ts` (+ `.test.ts`) | added | "Get Help Desktop Shortcut (Windows / macOS / Linux)" system scripts (`help_url`, `action`) |
+| `apps/api/src/routes/deviceHelpPublic.ts` (+ `.test.ts`) | added | Public check/submit |
+| `apps/api/src/routes/deviceHelp.ts` | added | Technician GET / rotate / disable (`devices.read` / `devices.write`, org + site access, audited) |
+| `apps/web/src/pages/help.astro` | added | Public page |
+| `apps/web/src/components/deviceHelp/DeviceHelpForm.tsx` (+ `.test.tsx`) | added | Public form |
+| `apps/web/src/components/deviceHelp/DeviceHelpLinkPanel.tsx` (+ `.test.tsx`) | added | Device Tickets tab panel: copy, install shortcut, new link, turn off |
+| `apps/api/src/index.ts` | modified | Mount `/device-help/public` (before) and `/device-help` |
+| `apps/api/src/middleware/bodyLimit.ts` | modified | `/api/v1/device-help/public/submit` shares the ticket-attachment 10 MB carve-out |
+| `apps/api/src/services/ticketChildWriters.ts` | modified | Register `deviceHelp/helpTicket.ts::attachHelpScreenshot` (ticket lock first) |
+| `apps/api/src/services/mcpCoverage.ts` | modified | Exemptions for `deviceHelp.ts`, `deviceHelpPublic.ts` |
+| `apps/api/src/__tests__/routerAuthGate.contract.test.ts` | modified | `deviceHelpPublicRoutes` in `EXEMPT` |
+| `apps/api/src/services/batteryHealthScript.ts` (+ `.test.ts`) | modified (fork file) | `FORK_SYSTEM_LIBRARY_SCRIPTS` also spreads `HELP_SHORTCUT_SCRIPTS` (count 3 -> 6) |
+| `apps/api/src/services/systemScriptLibrary.test.ts` | modified | Parameter env-var check accepts bash `$NAME` / `${NAME` for bash scripts |
+| `apps/web/src/components/devices/DeviceDetails.tsx` | modified | Tickets tab renders `DeviceHelpLinkPanel` above `DeviceTicketsTab` |
+| `apps/web/src/locales/*/devices.json`, `*/pages.json` (8 + 8 files) | modified | `deviceHelp.panel.*`, `deviceHelp.form.*`, `titles.deviceHelp` |
