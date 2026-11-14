@@ -17,6 +17,7 @@ import { anomaliesRoutes } from './anomalies';
 import { groupsRoutes } from './groups';
 import { patchesRoutes } from './patches';
 import { scriptsRoutes } from './scripts';
+import { driversRoutes } from './drivers'; // fork: device Drivers tab
 import { deviceAiOriginRoutes } from './aiOrigin';
 import { eventsRoutes } from './events';
 import { eventLogsRoutes } from './eventlogs';
@@ -181,6 +182,7 @@ deviceRoutes.route('/', patchesRoutes);
 // #11065 W04: POST /:id/oem-updates/run (Run vendor updates), GET status and history.
 deviceRoutes.route('/', oemUpdatesRoutes);
 deviceRoutes.route('/', scriptsRoutes);
+deviceRoutes.route('/', driversRoutes); // fork: GET/POST /:id/drivers
 // #5022 W02: GET /:id/ai-origin, GET /:id/ai-activity. :id-prefixed, so
 // mounting order relative to coreRoutes is immaterial (only STATIC paths
 // need to precede coreRoutes' /:id matcher) — placed beside scriptsRoutes

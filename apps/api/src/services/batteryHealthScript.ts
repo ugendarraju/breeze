@@ -4,6 +4,7 @@
 // device Overview's Power section reads them. Fields and the daily automation
 // are provisioned per partner by batteryHealthProvisioning.ts.
 import type { SystemLibraryScriptDefinition } from './systemScriptLibrary';
+import { DRIVER_SCRIPTS } from './driverScripts';
 
 export const BATTERY_HEALTH_SCRIPT_NAME = 'Battery Health (Windows)';
 
@@ -159,4 +160,7 @@ export const BATTERY_HEALTH_SCRIPTS_BY_OS = [
 ] as const;
 
 /** Spread into SYSTEM_LIBRARY_SCRIPTS (services/systemScriptLibrary.ts). */
-export const FORK_SYSTEM_LIBRARY_SCRIPTS: SystemLibraryScriptDefinition[] = BATTERY_HEALTH_SCRIPTS_BY_OS.map((s) => s.script);
+export const FORK_SYSTEM_LIBRARY_SCRIPTS: SystemLibraryScriptDefinition[] = [
+  ...BATTERY_HEALTH_SCRIPTS_BY_OS.map((s) => s.script),
+  ...DRIVER_SCRIPTS,
+];
