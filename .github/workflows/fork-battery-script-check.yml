@@ -1,0 +1,141 @@
+name: Fork battery script check
+
+# fork: runs the battery-health system scripts (apps/api/src/services/
+# batteryHealthScript.ts) on real macOS, Windows and Linux runners. Runners
+# have no battery, so each OS checks (1) the real no-battery path with the
+# OS's own tools, and (2) parsing of laptop-shaped sample data.
+on:
+  push:
+    branches: [ci/battery-script-check]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '22'
+      - name: Write the three scripts to files
+        run: |
+          mkdir -p out
+          node --experimental-strip-types --input-type=module -e "
+            const m = await import('./apps/api/src/services/batteryHealthScript.ts');
+            const fs = await import('node:fs');
+            fs.writeFileSync('out/windows.ps1', m.BATTERY_HEALTH_SCRIPT.content);
+            fs.writeFileSync('out/macos.sh', m.BATTERY_HEALTH_SCRIPT_MACOS.content);
+            fs.writeFileSync('out/linux.sh', m.BATTERY_HEALTH_SCRIPT_LINUX.content);
+          "
+          wc -l out/*
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: scripts
+          path: out/
+
+  macos:
+    needs: extract
+    runs-on: macos-latest
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: scripts
+      - name: Real macOS, no battery
+        run: |
+          sw_vers; echo "real ioreg battery lines: $(ioreg -rn AppleSmartBattery | wc -l)"
+          out=$(sh macos.sh); code=$?; echo "$out"
+          test $code -eq 0
+          echo "$out" | grep -q "No battery"
+          ! echo "$out" | grep -q "::breeze:custom-fields::"
+      - name: Apple Silicon battery sample (real macOS sh + sed)
+        run: |
+          mkdir -p fake && cat > fake/ioreg <<'EOF'
+          #!/bin/sh
+          cat <<'OUT'
+          +-o AppleSmartBattery  <class AppleSmartBattery, id 0x100000a6d, registered, matched, active, busy 0 (0 ms), retain 7>
+              {
+                "AppleRawMaxCapacity" = 4380
+                "DesignCapacity" = 6075
+                "MaxCapacity" = 100
+                "CycleCount" = 287
+                "Voltage" = 12650
+                "BatteryData" = {"DesignCapacity"=6075,"CycleCount"=287}
+              }
+          OUT
+          EOF
+          chmod +x fake/ioreg
+          out=$(PATH="$PWD/fake:$PATH" sh macos.sh); echo "$out"
+          echo "$out" | grep -qF '::breeze:custom-fields:: {"battery_design_capacity_mwh":76848,"battery_full_charge_capacity_mwh":55407,"battery_cycle_count":287}'
+      - name: Intel Mac battery sample (MaxCapacity in mAh, no AppleRawMaxCapacity)
+        run: |
+          cat > fake/ioreg <<'EOF'
+          #!/bin/sh
+          cat <<'OUT'
+          +-o AppleSmartBattery  <class AppleSmartBattery>
+              {
+                "MaxCapacity" = 4950
+                "DesignCapacity" = 5103
+                "CycleCount" = 410
+                "Voltage" = 12500
+              }
+          OUT
+          EOF
+          out=$(PATH="$PWD/fake:$PATH" sh macos.sh); echo "$out"
+          echo "$out" | grep -qF '"battery_design_capacity_mwh":63787,"battery_full_charge_capacity_mwh":61875,"battery_cycle_count":410'
+      - name: Script also runs under zsh and bash (agent may use either)
+        run: |
+          for shell in bash zsh; do echo "== $shell"; out=$(PATH="$PWD/fake:$PATH" $shell macos.sh); echo "$out" | tail -1 | grep -q "::breeze:custom-fields::"; done
+
+  windows:
+    needs: extract
+    runs-on: windows-latest
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: scripts
+      - name: Real Windows, no battery (WMI then powercfg fallback), Windows PowerShell 5.1
+        shell: pwsh
+        run: |
+          $out = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File windows.ps1 | Out-String
+          $code = $LASTEXITCODE
+          Write-Output $out
+          if ($code -ne 0) { throw "exit code $code" }
+          if ($out -notmatch 'No battery') { throw 'expected the no-battery message' }
+          if ($out -match '::breeze:custom-fields::') { throw 'must not write fields without a battery' }
+          $left = @(Get-ChildItem $env:TEMP -Filter 'breeze-battery-*.xml' -ErrorAction SilentlyContinue).Count
+          if ($left -ne 0) { throw "temporary battery report left behind ($left)" }
+      - name: powercfg battery report parsing (real report namespace, laptop sample)
+        shell: powershell
+        run: |
+          $sample = '<?xml version="1.0" encoding="utf-8"?><BatteryReport xmlns="http://schemas.microsoft.com/battery/2012"><Batteries><Battery><Id>X</Id><RelativeCapacity>0</RelativeCapacity><DesignCapacity>66000</DesignCapacity><FullChargeCapacity>30946</FullChargeCapacity><CycleCount>0</CycleCount></Battery></Batteries></BatteryReport>'
+          [xml]$xml = $sample
+          $bat = @($xml.BatteryReport.Batteries.Battery) | Where-Object { $_ } | Select-Object -First 1
+          if ([int64]$bat.DesignCapacity -ne 66000 -or [int64]$bat.FullChargeCapacity -ne 30946) { throw 'parse failed' }
+          Write-Output 'parsed OK'
+
+  linux:
+    needs: extract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: scripts
+      - name: Real Linux, no battery
+        run: |
+          out=$(sh linux.sh); echo "$out"
+          echo "$out" | grep -q "No battery"
+      - name: Laptop samples (energy and charge x voltage), plus a mouse battery to ignore
+        run: |
+          mk() { d=$(mktemp -d); mkdir -p $d/AC $d/mouse $d/BAT0; echo Mains > $d/AC/type; echo Battery > $d/mouse/type; echo Device > $d/mouse/scope; echo Battery > $d/BAT0/type; echo 1 > $d/BAT0/present; echo $d; }
+          A=$(mk); echo 66000000 > $A/BAT0/energy_full_design; echo 29700000 > $A/BAT0/energy_full; echo 312 > $A/BAT0/cycle_count
+          out=$(sed "s#/sys/class/power_supply#$A#" linux.sh | sh); echo "$out"
+          echo "$out" | grep -qF '{"battery_design_capacity_mwh":66000,"battery_full_charge_capacity_mwh":29700,"battery_cycle_count":312}'
+          B=$(mk); echo 4000000 > $B/BAT0/charge_full_design; echo 3500000 > $B/BAT0/charge_full; echo 11550000 > $B/BAT0/voltage_min_design
+          out=$(sed "s#/sys/class/power_supply#$B#" linux.sh | sh); echo "$out"
+          echo "$out" | grep -qF '{"battery_design_capacity_mwh":46200,"battery_full_charge_capacity_mwh":40425}'
+          for shell in dash bash; do sed "s#/sys/class/power_supply#$A#" linux.sh | $shell | grep -q "::breeze:custom-fields::"; done
