@@ -55,6 +55,10 @@ const SELF_MANAGED_DB_CONTEXT_ROUTES: readonly SelfManagedRoute[] = [
   // the handler would hold one pooled connection while waiting for a second
   // (#1105). The handler reads the device in a short caller-scoped context.
   { method: 'POST', pattern: /^\/api\/v1\/devices\/[0-9a-f-]{36}\/oem-updates\/run\/?$/i },
+  // fork: device Drivers tab scan / install / tool install. Same #7103 race as
+  // manual Run Script: executeScriptOnDevices commits its rows through
+  // runInDbContext before the command is sent.
+  { method: 'POST', pattern: /^\/api\/v1\/devices\/[0-9a-f-]{36}\/drivers\/(scan|install|install-tool)\/?$/i },
   { method: 'POST', pattern: /^\/api\/v1\/security\/scans\/[0-9a-f-]{36}\/cancel\/?$/i },
   { method: 'POST', pattern: /^\/api\/v1\/invoices\/[^/]+\/autopay\/charge-now\/?$/ },
   // Autopay routes own short authorized contexts; no outer request transaction.

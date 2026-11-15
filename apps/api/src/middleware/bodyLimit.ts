@@ -111,7 +111,8 @@ export function bodyLimitForPath(path: string): BodyLimitPolicy {
   // 413s at the global 1 MB gate before the route's own check ever runs
   // (#3482 class). The 64 KiB headroom covers the multipart envelope so the
   // route's specific ATTACHMENT_TOO_LARGE message wins.
-  if (path.match(/^\/api\/v1\/tickets\/[^/]+\/attachments$/)) {
+  // fork: the public "Get help" form (routes/deviceHelpPublic.ts) carries one screenshot under the same cap.
+  if (path.match(/^\/api\/v1\/tickets\/[^/]+\/attachments$/) || path === '/api/v1/device-help/public/submit') {
     return {
       rule: 'ticket-attachment',
       maxSize: 10 * 1024 * 1024 + 64 * 1024,

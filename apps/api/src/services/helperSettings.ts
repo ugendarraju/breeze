@@ -28,6 +28,7 @@ import {
   type BrandingCandidate,
   type BrandingDecision,
 } from './helperBranding';
+import { withDeviceHelpPortal } from './deviceHelp/helperPortalOverlay'; // fork
 
 const LEVEL_PRIORITY: Record<string, number> = {
   device: 5,
@@ -49,7 +50,10 @@ export async function getOrgHelperSettings(orgId: string): Promise<{ enabled: bo
     .limit(1);
   const settings = isObject(org?.settings) ? org.settings : {};
   const helper = isObject(settings.helper) ? settings.helper : {};
-  const enabled = typeof helper.enabled === 'boolean' ? helper.enabled : false;
+  // fork: Breeze Assist (the tray with the Get help item) is on wherever no
+  // policy and no explicit org setting says otherwise, so every technician's
+  // devices get it without setting up a policy. Upstream defaults to off.
+  const enabled = typeof helper.enabled === 'boolean' ? helper.enabled : true;
   return { enabled };
 }
 
@@ -275,7 +279,8 @@ export interface HelperConfigUpdateOptions extends DevicePolicySetOpts {
  * error.
  */
 export async function readCachedHelperSettings(deviceId: string, orgId: string): Promise<HelperSettings | null> {
-  return readDevicePolicyCache<HelperSettings>('helper', deviceId, orgId);
+  const cached = await readDevicePolicyCache<HelperSettings>('helper', deviceId, orgId);
+  return cached ? withDeviceHelpPortal(deviceId, cached) : null; // fork: tray opens Get help
 }
 
 export async function buildHelperConfigUpdate(
@@ -291,7 +296,7 @@ export async function buildHelperConfigUpdate(
   const cacheOrgId = devicePolicyCacheOrg(deviceId, { ...opts, orgId });
   if (!opts?.skipCacheRead) {
     const cached = await readDevicePolicyCache<HelperSettings>('helper', deviceId, cacheOrgId);
-    if (cached) return cached;
+    if (cached) return withDeviceHelpPortal(deviceId, cached); // fork: tray opens Get help
   }
 
   // Try config policy resolution first
@@ -309,12 +314,13 @@ export async function buildHelperConfigUpdate(
   if (settings === null) {
     const loadOrg = opts?.loadOrgHelperSettings ?? getOrgHelperSettings;
     const orgEnabled = (await loadOrg(orgId)).enabled;
-    settings = { ...HELPER_DEFAULTS, enabled: orgEnabled };
+    // fork: no Request Support by default - it opens the AI chat, not the Get help form.
+    settings = { ...HELPER_DEFAULTS, enabled: orgEnabled, showRequestSupport: false };
   }
 
   if (!opts?.skipCacheWrite) {
     await writeDevicePolicyCache('helper', deviceId, cacheOrgId, settings, HELPER_CACHE_TTL_SECONDS);
   }
 
-  return settings;
+  return withDeviceHelpPortal(deviceId, settings); // fork: tray opens Get help
 }

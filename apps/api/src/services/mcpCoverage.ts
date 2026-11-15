@@ -468,6 +468,9 @@ export const MCP_COVERAGE: Readonly<Record<string, McpCoverageEntry>> = {
   'deployments.ts': { tools: ['manage_deployments'] },
   'desktopWs.ts': { exempt: 'internal_plumbing', note: 'WebSocket/HTTP transport for event, remote-session or tunnel traffic.' },
   'devPush.ts': { exempt: 'internal_plumbing' },
+  // fork: per-device "Get help" link. Technician view/rotate/disable is a UI chore; the public side is the end user's form.
+  'deviceHelp.ts': { exempt: 'internal_plumbing', note: 'fork: view/rotate/disable a device Get help link from the device page.' },
+  'deviceHelpPublic.ts': { exempt: 'portal', note: 'fork: account-less Get help form for the person at a managed computer; submit only.' },
   'devices/pamReconciliation.ts': { exempt: 'human_only_pam_reconciliation', note: 'Privileged-access recovery is a human operator decision requiring PAM approval, device execution permission, MFA policy and an audited reason. No AI reset tool: restoring elevation availability must not be initiated by an autonomous agent.' },
   'devices/actuateElevation.ts': { exempt: 'internal_plumbing', note: "PAM actuator is disabled by default in every env; request_elevation already covers the product path. From #6796." },
   // #9234: the device-page button for the watchdog restart the AI tool already queues.
@@ -513,6 +516,7 @@ export const MCP_COVERAGE: Readonly<Record<string, McpCoverageEntry>> = {
   'agents/isolationVerify.ts': { exempt: 'agent_transport' },
   'devices/forceReboot.ts': { exempt: 'human_only_force_reboot', note: 'Force reboot now: closes running apps; step-up bound to one device.' },
   'devices/oemUpdates.ts': { exempt: 'human_only_oem_updates', note: 'Run vendor updates (BIOS, firmware, drivers through the maker\'s tool) plus its status and history reads; no AI tool in v1 (#11065 Decision 9).' },
+  'devices/drivers.ts': { exempt: 'human_only_oem_updates', note: 'fork: device Drivers tab. Driver scan and technician-confirmed driver / maker-tool installs; no AI tool.' },
   'oemUpdates/fleet.ts': { exempt: 'human_only_oem_updates', note: 'Vendor updates fleet read: counts and the device list behind the Patches tab. Read-only; no AI tool in v1 (#11065 Decision 9).' },
   'devices/moveOrg.ts': { exempt: 'human_only_tenant_restructure', note: 'Cross-tenant device move -- rewrites which tenant owns the device.' },
   'devices/network.ts': { tools: ['list_network_assets'] },

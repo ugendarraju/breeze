@@ -108,6 +108,53 @@ Windows `software_update` commands are only sent with an exact winget id (never 
 | `apps/api/src/services/aiToolsDeviceSoftware.ts` (+ `aiToolsSoftwareDevice.handlers.test.ts`) | Same rule for `manage_device_software` |
 | `apps/web/src/components/devices/DeviceSoftwareInventory.tsx` (+ `.bulk.test.tsx`) | Sends the bare id; Windows Update disabled with a reason when the id is unknown; bulk summary counts skipped rows |
 | `apps/web/src/locales/*/devices.json` (8 files) | `deviceSoftwareInventory.reasons.noExactPackage`, `deviceSoftwareInventory.bulk.skipped` |
+## Get help link: account-less tickets from a managed computer (fork)
+
+The person at a managed computer opens a per-device link (`/help#<token>`, usually from a "Get help" desktop shortcut) and sends a ticket with name, phone, company, email, problem and an optional screenshot. No account. The ticket lands on the device's org, linked to the device (queue and the device Tickets tab). No agent or helper change.
+
+- **Token**: derived, never stored: `base64url(deviceId | version | HMAC(secret-derived key, deviceId:version))`. Technicians can re-display it any time. Rotate/disable state is a Redis hash `fork:device-help:<deviceId>` (`v`, `off`); no hash means v1, enabled. No table, no migration.
+- **Public API** (`/api/v1/device-help/public/{check,submit}`): token in the body, never the URL; returns no tenant data; per-IP and per-device rate limits; one PNG/JPEG/WebP (sniffed) up to 10 MB.
+- **Ticket**: `createTicket` with system actor "Get help form" (source `api`, requester name/email; phone/company in the description); the screenshot goes on one public comment as a normal ticket attachment.
+
+| Path | Kind | What |
+|---|---|---|
+| `apps/api/src/services/deviceHelp/helpLinkToken.ts` (+ `.test.ts`) | added | Mint/verify the link, rotate/disable state |
+| `apps/api/src/services/deviceHelp/helpTicket.ts` (+ `.test.ts`) | added | Form -> ticket + screenshot attachment |
+| `apps/api/src/services/deviceHelp/helpShortcutScripts.ts` (+ `.test.ts`) | added | "Get Help Desktop Shortcut (Windows / macOS / Linux)" system scripts (`help_url`, `action`) |
+| `apps/api/src/services/deviceHelp/helperPortalOverlay.ts` (+ `.test.ts`) | added | Breeze Assist tray "Open Breeze Portal" opens the device Get help form (per-device `portalUrl`) |
+| `apps/api/src/services/helperSettings.ts` | modified | Helper settings leave through `withDeviceHelpPortal` (3 return sites); Breeze Assist defaults ON with no Request Support when no policy/org setting decides (`getOrgHelperSettings` unset -> true) |
+| `apps/api/src/services/deviceHelp/helpTicketAssignee.ts` (+ `.test.ts`) | added | Get help ticket -> routing rule, else partner default assignee, else oldest active partner staff |
+| `apps/api/src/__tests__/integration/agentPolicyResolversPartnerWide.integration.test.ts` | modified | No-policy helper path now expects `enabled: true` (fork default) |
+| `apps/api/src/routes/deviceHelpPublic.ts` (+ `.test.ts`) | added | Public check/submit |
+| `apps/api/src/routes/deviceHelp.ts` (+ `.test.ts`) | added | Technician GET / rotate / disable (`devices.read` / `devices.write`, org + site access, audited) |
+| `apps/web/src/pages/help.astro` | added | Public page |
+| `apps/web/src/components/deviceHelp/DeviceHelpForm.tsx` (+ `.test.tsx`) | added | Public form |
+| `apps/web/src/components/deviceHelp/DeviceHelpLinkPanel.tsx` (+ `.test.tsx`) | added | Device Tickets tab panel: copy, install shortcut, new link, turn off |
+| `apps/api/src/index.ts` | modified | Mount `/device-help/public` (before) and `/device-help` |
+| `apps/api/src/middleware/bodyLimit.ts` | modified | `/api/v1/device-help/public/submit` shares the ticket-attachment 10 MB carve-out |
+| `apps/api/src/services/ticketChildWriters.ts` | modified | Register `deviceHelp/helpTicket.ts::attachHelpScreenshot` (ticket lock first) |
+| `apps/api/src/services/mcpCoverage.ts` | modified | Exemptions for `deviceHelp.ts`, `deviceHelpPublic.ts` |
+| `apps/api/src/__tests__/routerAuthGate.contract.test.ts` | modified | `deviceHelpPublicRoutes` in `EXEMPT` |
+| `apps/api/src/services/batteryHealthScript.ts` (+ `.test.ts`) | modified (fork file) | `FORK_SYSTEM_LIBRARY_SCRIPTS` also spreads `HELP_SHORTCUT_SCRIPTS` (count 3 -> 6) |
+| `apps/api/src/services/systemScriptLibrary.test.ts` | modified | Parameter env-var check accepts bash `$NAME` / `${NAME` for bash scripts |
+| `apps/web/src/components/devices/DeviceDetails.tsx` | modified | Tickets tab renders `DeviceHelpLinkPanel` above `DeviceTicketsTab` |
+| `apps/web/src/locales/*/devices.json`, `*/pages.json` (8 + 8 files) | modified | `deviceHelp.panel.*`, `deviceHelp.form.*`, `titles.deviceHelp` |
+## Device Drivers tab (fork)
+
+Windows only. Scan lists installed drivers and newer ones from Windows Update (matched by hardware ID) and from the maker's tool when installed (Dell Command Update, HP Image Assistant, Lenovo Thin Installer / System Update). Technician-confirmed installs; never restarts the device. All device work runs as system library scripts (no agent change).
+
+| Path | Change |
+|---|---|
+| `apps/api/src/services/driverScripts.ts` (+ `.test.ts`) | added: Driver Scan / Driver Install / Driver Tool Install (winget) scripts and output parsers |
+| `apps/api/src/services/batteryHealthScript.ts` | `FORK_SYSTEM_LIBRARY_SCRIPTS` also spreads `DRIVER_SCRIPTS` |
+| `apps/api/src/services/batteryHealthScript.test.ts` | fork-script count check counts battery scripts only |
+| `apps/api/src/routes/devices/drivers.ts` | added: `GET /devices/:id/drivers`, `POST .../drivers/scan`, `.../drivers/install`, `.../drivers/install-tool` |
+| `apps/api/src/routes/devices/index.ts` | mounts `driversRoutes` |
+| `apps/api/src/middleware/selfManagedDbContextRoutes.ts` | registers the three drivers POST routes |
+| `apps/api/src/services/mcpCoverage.ts` | `devices/drivers.ts` exempt (`human_only_oem_updates`) |
+| `apps/web/src/components/devices/DeviceDriversTab.tsx` (+ `.test.tsx`) | added: Drivers tab |
+| `apps/web/src/components/devices/DeviceDetails.tsx` | `drivers` tab (Windows, Inventory group under More) |
+| `apps/web/src/locales/*/devices.json` (8 files) | `deviceDrivers.*`, `deviceDetails.drivers`, `deviceDetails.driversTitle` |
 
 ## Software tab: guarded Windows updates, user notice, "Close & update" (fork)
 

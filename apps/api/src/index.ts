@@ -126,6 +126,8 @@ import { enrollmentKeyRoutes, publicEnrollmentRoutes, publicShortLinkRoutes } fr
 import { installerRoutes } from './routes/installer';
 import { supportPublicRoutes } from './routes/supportPublic';
 import { callerVerifyPublicRoutes } from './routes/callerVerifyPublic';
+import { deviceHelpPublicRoutes } from './routes/deviceHelpPublic'; // fork: Get help link
+import { deviceHelpRoutes } from './routes/deviceHelp'; // fork: Get help link
 import { ssoRoutes } from './routes/sso';
 import { partnerLoginBrandingRoutes } from './routes/partnerLoginBranding';
 import { preAssignmentRoutes } from './routes/preAssignment';
@@ -968,6 +970,10 @@ api.route('/support', supportPublicRoutes);
 // is off, before any Redis/DB work; per-IP, per-token and miss budgets; one
 // hash lookup in a short system context. See routes/callerVerifyPublic.ts.
 api.route('/verify', callerVerifyPublicRoutes);
+// fork: account-less "Get help" form (token in the body is the only credential), then the
+// technician routes. Public FIRST: the technician router's '*' auth middleware would match it too.
+api.route('/device-help/public', deviceHelpPublicRoutes);
+api.route('/device-help', deviceHelpRoutes);
 api.route('/sso', ssoRoutes);
 // Mounted directly at /partners (not nested under /orgs' /partners/me or the
 // legacy singular /partner router) — final URL /api/v1/partners/me/login-branding

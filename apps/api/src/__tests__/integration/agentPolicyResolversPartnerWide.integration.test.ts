@@ -693,7 +693,7 @@ describe('agent-facing config-policy resolvers honour partner-wide policies (#29
       const blind = await withDbAccessContext(partnerWideBlindContext(org!.id), () =>
         buildHelperConfigUpdate(device.id, org!.id),
       );
-      expect(blind.enabled).toBe(false);
+      expect(blind.enabled).toBe(true); // fork: Breeze Assist defaults on (helperSettings.ts); showOpenPortal still tells the paths apart
       expect(blind.showOpenPortal).toBe(true);
 
       await purgeCaches(device.id);

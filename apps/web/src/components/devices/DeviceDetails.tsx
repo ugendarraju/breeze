@@ -57,6 +57,7 @@ import DeviceInfoTab from "./DeviceInfoTab";
 import DeviceHardwareInventory from "./DeviceHardwareInventory";
 import DeviceSoftwareInventory from "./DeviceSoftwareInventory";
 import DevicePatchStatusTab from "./DevicePatchStatusTab";
+import DeviceDriversTab from "./DeviceDriversTab"; // fork: Drivers tab
 import DeviceVulnerabilitiesTab from "./DeviceVulnerabilitiesTab";
 import DeviceOneDriveTab from "./DeviceOneDriveTab";
 import DeviceSecurityTab from "./DeviceSecurityTab";
@@ -95,6 +96,7 @@ import { decodeScriptExecutionId } from "@/lib/deviceScriptsLink";
 import { OverflowTabs, type OverflowTab } from "../shared/OverflowTabs";
 import DeviceBackupTab from "../backup/DeviceBackupTab";
 import DeviceTicketsTab from "../tickets/DeviceTicketsTab";
+import DeviceHelpLinkPanel from "../deviceHelp/DeviceHelpLinkPanel"; // fork: Get help link
 import OperatorTaskActivityFeed from "../aiOperator/OperatorTaskActivityFeed";
 import DeviceAnomaliesPanel from "./DeviceAnomaliesPanel";
 import { useMlFeatureFlags } from "@/hooks/useMlFeatureFlags";
@@ -107,6 +109,7 @@ import { Trans, useTranslation } from "react-i18next";
 import "../../lib/i18n";
 import ContactResponsibilitiesCard from "../shared/ContactResponsibilitiesCard";
 import { Puzzle } from "lucide-react";
+import { CircuitBoard } from "lucide-react"; // fork: Drivers tab icon
 import ExtensionSlotHost, {
   useExtensionSlotDescriptors,
 } from "../extensions/ExtensionSlotHost";
@@ -125,6 +128,7 @@ type CoreTab =
   | "alerts"
   | "anomalies"
   | "scripts"
+  | "drivers"
   | "performance"
   | "eventlog"
   | "topology"
@@ -261,6 +265,7 @@ const VALID_TABS: CoreTab[] = [
   "onedrive",
   "alerts",
   "scripts",
+  "drivers",
   "performance",
   "anomalies",
   "eventlog",
@@ -753,6 +758,20 @@ export default function DeviceDetails({
       icon: <Usb className="h-4 w-4" />,
       title: t("deviceDetails.usbBluetoothAndConnectedDevices"),
     },
+    // fork: Windows only. Installed drivers and newer ones from Windows Update /
+    // the maker's tool (DeviceDriversTab). A `#drivers` deep link on another OS
+    // mounts the panel, which explains it is Windows only.
+    ...(device.os === "windows"
+      ? [
+          {
+            id: "drivers" as Tab,
+            group: groups.inventory,
+            label: t("deviceDetails.drivers"),
+            icon: <CircuitBoard className="h-4 w-4" />,
+            title: t("deviceDetails.driversTitle"),
+          },
+        ]
+      : []),
     // Workload hosts only (#8193): hostsWorkloads is true once any container
     // or VM runtime is detected. A `#workloads` deep link still mounts the
     // panel on other devices — it explains "no runtime" / "agent too old"
@@ -1205,6 +1224,10 @@ export default function DeviceDetails({
         />
       )}
 
+      {activeTab === "drivers" && (
+        <DeviceDriversTab deviceId={device.id} timezone={effectiveTimezone} />
+      )}
+
       {activeTab === "patches" && (
         <DevicePatchStatusTab
           deviceId={device.id}
@@ -1285,7 +1308,12 @@ export default function DeviceDetails({
         />
       )}
 
-      {activeTab === "tickets" && <DeviceTicketsTab deviceId={device.id} />}
+      {activeTab === "tickets" && (
+        <>
+          <DeviceHelpLinkPanel deviceId={device.id} />
+          <DeviceTicketsTab deviceId={device.id} />
+        </>
+      )}
 
       {activeTab === "chat" && (
         <DeviceChatPanel
