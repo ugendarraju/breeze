@@ -2501,13 +2501,13 @@
       "queuedOffline": "L’appareil est hors ligne : les mises à jour de {{names}} sont en file d’attente sans vérification des programmes ouverts.",
       "queuedPlain": "Les mises à jour de {{names}} sont en file d’attente; les programmes ouverts n’ont pas été vérifiés.",
       "userNotified": "Un avis a été envoyé à la personne sur l’appareil.",
-      "lastRun": "Dernière exécution des mises à jour ({{when}})",
-      "refresh": "Actualiser",
-      "outcomeUpdated": "Mis à jour",
-      "outcomeUpToDate": "Déjà à jour",
-      "outcomeBlocked": "Non mis à jour, toujours ouvert : {{programs}}",
-      "outcomeFailed": "Échec (code de sortie {{code}})",
-      "outcomeFailedOpen": "Échec, fichiers utilisés par : {{programs}}"
+      "statusQueued": "Mise à jour en file d’attente, en attente de l’appareil",
+      "statusRunning": "Mise à jour…",
+      "statusSucceeded": "Mis à jour",
+      "statusUpToDate": "Déjà à jour",
+      "statusBlocked": "Non mis à jour, toujours ouvert : {{programs}}",
+      "statusFailed": "Échec de la mise à jour : {{message}}",
+      "alreadyRunning": "Une mise à jour de cette app est déjà en cours."
     },
     "closeUpdate": {
       "action": "Fermer et mettre à jour",

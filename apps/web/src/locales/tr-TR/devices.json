@@ -2501,13 +2501,13 @@
       "queuedOffline": "Cihaz çevrimdışı: {{names}} güncellemeleri açık programlar kontrol edilmeden kuyruğa alındı.",
       "queuedPlain": "{{names}} güncellemeleri kuyruğa alındı; açık programlar kontrol edilmedi.",
       "userNotified": "Cihazdaki kişiye bir bildirim gönderildi.",
-      "lastRun": "Son güncelleme çalıştırması ({{when}})",
-      "refresh": "Yenile",
-      "outcomeUpdated": "Güncellendi",
-      "outcomeUpToDate": "Zaten güncel",
-      "outcomeBlocked": "Güncellenmedi, hâlâ açık: {{programs}}",
-      "outcomeFailed": "Başarısız (çıkış kodu {{code}})",
-      "outcomeFailedOpen": "Başarısız, dosyaları kullanan: {{programs}}"
+      "statusQueued": "Güncelleme kuyrukta, cihaz bekleniyor",
+      "statusRunning": "Güncelleniyor…",
+      "statusSucceeded": "Güncellendi",
+      "statusUpToDate": "Zaten güncel",
+      "statusBlocked": "Güncellenmedi, hâlâ açık: {{programs}}",
+      "statusFailed": "Güncelleme başarısız: {{message}}",
+      "alreadyRunning": "Bu uygulama için zaten bir güncelleme sürüyor."
     },
     "closeUpdate": {
       "action": "Kapat ve güncelle",

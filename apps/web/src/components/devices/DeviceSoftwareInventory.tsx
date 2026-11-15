@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Package,
   Search,
@@ -11,7 +11,10 @@ import {
   Trash2,
   Loader2,
   AlertTriangle,
-  Power
+  Power,
+  Clock,
+  CheckCircle2,
+  XCircle
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { fetchWithAuth } from '../../stores/auth';
@@ -82,20 +85,21 @@ type BatchResponse = {
   skipped: Array<{ name: string }>;
   notified: boolean;
 };
-// fork: GET /devices/:id/software/update-runs/latest
-type UpdateRun = {
+// fork: GET /devices/:id/software/update-status — latest update state per package.
+type UpdateState = 'queued' | 'running' | 'succeeded' | 'up_to_date' | 'blocked' | 'failed';
+type PackageStatus = {
+  packageId: string;
+  name: string;
+  state: UpdateState;
+  message: string | null;
+  programs: string[];
   commandId: string;
-  status: string;
-  createdAt: string;
-  completedAt: string | null;
-  packages: Array<{
-    packageId: string;
-    name: string;
-    outcome: 'updated' | 'up_to_date' | 'blocked' | 'failed';
-    exitCode: number | null;
-    programs: string[];
-  }>;
+  updatedAt: string;
 };
+const IN_PROGRESS: ReadonlySet<UpdateState> = new Set(['queued', 'running']);
+const STATUS_POLL_MS = 5_000;
+// The agent re-sends its software list after a refresh_inventory; give it time.
+const INVENTORY_REFETCH_MS = 90_000;
 
 // We block update/uninstall for Apple-published macOS apps because their
 // package-manager identity (Apple-signed App Store / OS components) is not
@@ -153,6 +157,37 @@ function actionsAreSupported(
   return { update: { allowed: false, reason }, uninstall: { allowed: false, reason } };
 }
 
+// fork: one line under the software name with its latest update's state.
+function UpdateStatusLine({ status }: { status: PackageStatus }) {
+  const { t } = useTranslation('devices');
+  const programs = status.programs.join(', ');
+  const view = {
+    queued: { icon: <Clock className="h-3.5 w-3.5" />, text: t('deviceSoftwareInventory.guarded.statusQueued'), tone: 'text-muted-foreground' },
+    running: { icon: <Loader2 className="h-3.5 w-3.5 animate-spin" />, text: t('deviceSoftwareInventory.guarded.statusRunning'), tone: 'text-muted-foreground' },
+    succeeded: { icon: <CheckCircle2 className="h-3.5 w-3.5" />, text: t('deviceSoftwareInventory.guarded.statusSucceeded'), tone: 'text-emerald-600' },
+    up_to_date: { icon: <CheckCircle2 className="h-3.5 w-3.5" />, text: t('deviceSoftwareInventory.guarded.statusUpToDate'), tone: 'text-emerald-600' },
+    blocked: { icon: <AlertTriangle className="h-3.5 w-3.5" />, text: t('deviceSoftwareInventory.guarded.statusBlocked', { programs }), tone: 'text-amber-600' },
+    failed: {
+      icon: <XCircle className="h-3.5 w-3.5" />,
+      text: t('deviceSoftwareInventory.guarded.statusFailed', {
+        message: programs ? `${status.message ?? ''} (${programs})` : status.message ?? '',
+      }),
+      tone: 'text-destructive',
+    },
+  }[status.state];
+  return (
+    <div
+      data-testid={`software-update-status-${status.packageId}`}
+      role="status"
+      title={view.text}
+      className={`mt-1 flex max-w-md items-center gap-1 text-xs ${view.tone}`}
+    >
+      {view.icon}
+      <span className="truncate">{view.text}</span>
+    </div>
+  );
+}
+
 function formatDate(value?: string, timezone?: string) {
   if (!value) return '-';
   const date = new Date(value);
@@ -185,8 +220,8 @@ export default function DeviceSoftwareInventory({ deviceId, timezone, osType }: 
   // per-row spinner and disable other actions on that row without disabling
   // the entire grid.
   const [pendingActions, setPendingActions] = useState<Record<string, PendingAction | undefined>>({});
-  // fork: the last guarded Windows update run (blockers/outcomes for the technician).
-  const [lastRun, setLastRun] = useState<UpdateRun | null>(null);
+  // fork: live update status per package (lowercased winget id).
+  const [updateStatus, setUpdateStatus] = useState<Record<string, PackageStatus>>({});
   // null when no confirm dialog is open. Only Uninstall opens one — Update
   // queues directly, since the worst case is a silent no-op when the package
   // is already current.
@@ -211,8 +246,9 @@ export default function DeviceSoftwareInventory({ deviceId, timezone, osType }: 
     return () => clearTimeout(timer);
   }, [search]);
 
-  const fetchSoftware = useCallback(async () => {
-    setLoading(true);
+  // fork: `quiet` refreshes the list in place (no loading screen), after an update.
+  const fetchSoftware = useCallback(async (quiet = false) => {
+    if (!quiet) setLoading(true);
     setError(undefined);
     try {
       // Fetch all software (use high limit since we're doing client-side filtering)
@@ -239,21 +275,46 @@ export default function DeviceSoftwareInventory({ deviceId, timezone, osType }: 
 
   const isWindowsDevice = osType?.toLowerCase() === 'windows';
 
-  // fork: last guarded update run. Best effort: the panel just stays hidden on failure.
-  const fetchLastRun = useCallback(async () => {
+  // fork: live update status. Best effort: rows just show no status on failure.
+  const previousStates = useRef<Record<string, UpdateState>>({});
+  const lastInventoryRefetch = useRef(0);
+  const fetchUpdateStatus = useCallback(async () => {
     try {
-      const response = await fetchWithAuth(`/devices/${deviceId}/software/update-runs/latest`);
+      const response = await fetchWithAuth(`/devices/${deviceId}/software/update-status`);
       if (!response.ok) return;
       const json = await response.json();
-      setLastRun(json?.run ?? null);
+      const list: PackageStatus[] = Array.isArray(json?.packages) ? json.packages : [];
+      const next: Record<string, PackageStatus> = {};
+      for (const s of list) next[s.packageId.toLowerCase()] = s;
+      // An update that just finished: the API has asked the agent for a fresh
+      // software list, so re-read the list once that has had time to arrive
+      // and the row shows the new version.
+      const justFinished = list.some((s) => {
+        const before = previousStates.current[s.packageId.toLowerCase()];
+        return before !== undefined && IN_PROGRESS.has(before) && !IN_PROGRESS.has(s.state);
+      });
+      previousStates.current = Object.fromEntries(list.map((s) => [s.packageId.toLowerCase(), s.state]));
+      setUpdateStatus(next);
+      if (justFinished && Date.now() - lastInventoryRefetch.current > INVENTORY_REFETCH_MS) {
+        lastInventoryRefetch.current = Date.now();
+        setTimeout(() => void fetchSoftware(true), INVENTORY_REFETCH_MS);
+      }
     } catch {
       // ignore
     }
-  }, [deviceId]);
+  }, [deviceId, fetchSoftware]);
 
   useEffect(() => {
-    if (isWindowsDevice) void fetchLastRun();
-  }, [isWindowsDevice, fetchLastRun]);
+    void fetchUpdateStatus();
+  }, [fetchUpdateStatus]);
+
+  // Poll while anything is queued or running.
+  const anyInProgress = Object.values(updateStatus).some((s) => IN_PROGRESS.has(s.state));
+  useEffect(() => {
+    if (!anyInProgress) return;
+    const timer = setInterval(() => void fetchUpdateStatus(), STATUS_POLL_MS);
+    return () => clearInterval(timer);
+  }, [anyInProgress, fetchUpdateStatus]);
 
   // fork: Windows updates (single, bulk, Close & update) go through one batch
   // request: the API finds the programs holding each package's files, notifies
@@ -309,10 +370,10 @@ export default function DeviceSoftwareInventory({ deviceId, timezone, osType }: 
           for (const r of targets) delete next[r.id];
           return next;
         });
-        void fetchLastRun();
+        void fetchUpdateStatus();
       }
     },
-    [deviceId, fetchLastRun, t]
+    [deviceId, fetchUpdateStatus, t]
   );
 
   const queueSoftwareAction = useCallback(
@@ -390,6 +451,17 @@ export default function DeviceSoftwareInventory({ deviceId, timezone, osType }: 
       const isApple = isApplePublisher(publisher);
       const updateAvailable = item.updateAvailable === true;
       const exactPackageId = wingetIdFor(item.updatePackageId);
+      // fork: live status of this row's update (by its exact winget id).
+      const status = exactPackageId ? updateStatus[exactPackageId.toLowerCase()] ?? null : null;
+      const capabilities = actionsAreSupported(osType, isApple, updateAvailable, exactPackageId !== null, {
+        noUpdateReason: t('deviceSoftwareInventory.reasons.noUpdate'),
+        noExactPackageReason: t('deviceSoftwareInventory.reasons.noExactPackage'),
+        appleReason: t('deviceSoftwareInventory.reasons.appleManaged'),
+        unsupportedOsReason: (os) => t('deviceSoftwareInventory.reasons.unsupportedOs', { os }),
+      });
+      if (status && IN_PROGRESS.has(status.state) && capabilities.update.allowed) {
+        capabilities.update = { allowed: false, reason: t('deviceSoftwareInventory.guarded.alreadyRunning') };
+      }
       return {
         id: item.id ?? `${item.name ?? item.title ?? 'software'}-${index}`,
         name: item.name ?? item.title ?? t('deviceSoftwareInventory.unknownSoftware'),
@@ -401,15 +473,11 @@ export default function DeviceSoftwareInventory({ deviceId, timezone, osType }: 
         availableVersion: item.availableVersion ?? null,
         updatePackageId: exactPackageId ?? item.updatePackageId ?? null,
         installDate: formatDate(item.installDate ?? item.installedAt ?? item.install_date, effectiveTimezone),
-        capabilities: actionsAreSupported(osType, isApple, updateAvailable, exactPackageId !== null, {
-          noUpdateReason: t('deviceSoftwareInventory.reasons.noUpdate'),
-          noExactPackageReason: t('deviceSoftwareInventory.reasons.noExactPackage'),
-          appleReason: t('deviceSoftwareInventory.reasons.appleManaged'),
-          unsupportedOsReason: (os) => t('deviceSoftwareInventory.reasons.unsupportedOs', { os }),
-        }),
+        updateStatus: status,
+        capabilities,
       };
     });
-  }, [software, effectiveTimezone, osType, t]);
+  }, [software, effectiveTimezone, osType, t, updateStatus]);
 
   const filteredRows = useMemo(() => {
     return rows.filter(item => {
@@ -697,43 +765,6 @@ export default function DeviceSoftwareInventory({ deviceId, timezone, osType }: 
         </div>
       )}
 
-      {/* fork: last guarded update run — what updated and which programs blocked the rest */}
-      {isWindowsDevice && lastRun && lastRun.packages.length > 0 && (
-        <div data-testid="software-last-update-run" className="mt-4 rounded-md border px-4 py-3 text-sm">
-          <div className="flex items-center justify-between gap-2">
-            <span className="font-medium">
-              {t('deviceSoftwareInventory.guarded.lastRun', { when: formatDate(lastRun.createdAt, effectiveTimezone) })}
-            </span>
-            <button
-              type="button"
-              onClick={() => void fetchLastRun()}
-              className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
-            >
-              <RefreshCw className="h-3.5 w-3.5" />
-              {t('deviceSoftwareInventory.guarded.refresh')}
-            </button>
-          </div>
-          <ul className="mt-2 space-y-1">
-            {lastRun.packages.map((p) => (
-              <li key={p.packageId} className="flex flex-wrap gap-x-2">
-                <span className="font-medium">{p.name}</span>
-                <span className={p.outcome === 'blocked' || p.outcome === 'failed' ? 'text-destructive' : 'text-muted-foreground'}>
-                  {p.outcome === 'blocked'
-                    ? t('deviceSoftwareInventory.guarded.outcomeBlocked', { programs: p.programs.join(', ') })
-                    : p.outcome === 'failed'
-                      ? p.programs.length > 0
-                        ? t('deviceSoftwareInventory.guarded.outcomeFailedOpen', { programs: p.programs.join(', ') })
-                        : t('deviceSoftwareInventory.guarded.outcomeFailed', { code: p.exitCode ?? '?' })
-                      : p.outcome === 'up_to_date'
-                        ? t('deviceSoftwareInventory.guarded.outcomeUpToDate')
-                        : t('deviceSoftwareInventory.guarded.outcomeUpdated')}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
       {/* Table */}
       <div className="mt-4 overflow-hidden rounded-md border">
         <div className="max-h-[500px] overflow-auto">
@@ -796,6 +827,7 @@ export default function DeviceSoftwareInventory({ deviceId, timezone, osType }: 
                           )}
                           {item.name}
                         </span>
+                        {item.updateStatus && <UpdateStatusLine status={item.updateStatus} />}
                       </td>
                       <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
                         {item.updateAvailable && item.availableVersion ? (

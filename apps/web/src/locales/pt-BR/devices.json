@@ -2501,13 +2501,13 @@
       "queuedOffline": "O dispositivo está offline: as atualizações de {{names}} foram para a fila sem verificar programas abertos.",
       "queuedPlain": "As atualizações de {{names}} foram para a fila; os programas abertos não foram verificados.",
       "userNotified": "Um aviso foi enviado para a pessoa no dispositivo.",
-      "lastRun": "Última execução de atualizações ({{when}})",
-      "refresh": "Atualizar",
-      "outcomeUpdated": "Atualizado",
-      "outcomeUpToDate": "Já está atualizado",
-      "outcomeBlocked": "Não atualizado, ainda aberto: {{programs}}",
-      "outcomeFailed": "Falhou (código de saída {{code}})",
-      "outcomeFailedOpen": "Falhou, arquivos em uso por: {{programs}}"
+      "statusQueued": "Atualização na fila, aguardando o dispositivo",
+      "statusRunning": "Atualizando…",
+      "statusSucceeded": "Atualizado",
+      "statusUpToDate": "Já está atualizado",
+      "statusBlocked": "Não atualizado, ainda aberto: {{programs}}",
+      "statusFailed": "A atualização falhou: {{message}}",
+      "alreadyRunning": "Já há uma atualização em andamento para este app."
     },
     "closeUpdate": {
       "action": "Fechar e atualizar",

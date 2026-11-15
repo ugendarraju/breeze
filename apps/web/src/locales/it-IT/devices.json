@@ -2501,13 +2501,13 @@
       "queuedOffline": "Il dispositivo è offline: gli aggiornamenti di {{names}} sono in coda senza controllare i programmi aperti.",
       "queuedPlain": "Gli aggiornamenti di {{names}} sono in coda; i programmi aperti non sono stati controllati.",
       "userNotified": "È stato inviato un avviso alla persona sul dispositivo.",
-      "lastRun": "Ultima esecuzione degli aggiornamenti ({{when}})",
-      "refresh": "Aggiorna",
-      "outcomeUpdated": "Aggiornato",
-      "outcomeUpToDate": "Già aggiornato",
-      "outcomeBlocked": "Non aggiornato, ancora aperto: {{programs}}",
-      "outcomeFailed": "Non riuscito (codice di uscita {{code}})",
-      "outcomeFailedOpen": "Non riuscito, file in uso da: {{programs}}"
+      "statusQueued": "Aggiornamento in coda, in attesa del dispositivo",
+      "statusRunning": "Aggiornamento in corso…",
+      "statusSucceeded": "Aggiornato",
+      "statusUpToDate": "Già aggiornato",
+      "statusBlocked": "Non aggiornato, ancora aperto: {{programs}}",
+      "statusFailed": "Aggiornamento non riuscito: {{message}}",
+      "alreadyRunning": "È già in corso un aggiornamento per questa app."
     },
     "closeUpdate": {
       "action": "Chiudi e aggiorna",

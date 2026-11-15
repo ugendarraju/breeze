@@ -12,8 +12,8 @@ import { showToast } from '../shared/Toast';
 const inner = vi.hoisted(() => vi.fn());
 vi.mock('../../stores/auth', () => ({
   fetchWithAuth: vi.fn((url: unknown, init?: unknown) =>
-    String(url).includes('/software/update-runs/')
-      ? Promise.resolve({ ok: true, status: 200, json: async () => ({ run: null }) })
+    String(url).includes('/software/update-status')
+      ? Promise.resolve({ ok: true, status: 200, json: async () => ({ packages: [] }) })
       : inner(url, init)
   ),
 }));
