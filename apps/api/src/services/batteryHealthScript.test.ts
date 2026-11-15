@@ -22,12 +22,12 @@ const SCRIPT = '22222222-2222-2222-2222-222222222222';
 
 describe('battery health scripts (fork)', () => {
   it('ships one script per OS in the system script library, each limited to its OS', () => {
-    expect(FORK_SYSTEM_LIBRARY_SCRIPTS).toHaveLength(6); // 3 battery + 3 Get help shortcut
+    expect(FORK_SYSTEM_LIBRARY_SCRIPTS.filter((s) => s.name.startsWith('Battery Health'))).toHaveLength(3);
     for (const { osType, script } of BATTERY_HEALTH_SCRIPTS_BY_OS) {
       expect(SYSTEM_LIBRARY_SCRIPTS).toContain(script);
       expect(script.osTypes).toEqual([osType]);
     }
-    expect(new Set(FORK_SYSTEM_LIBRARY_SCRIPTS.map((s) => s.name)).size).toBe(6);
+    expect(new Set(FORK_SYSTEM_LIBRARY_SCRIPTS.map((s) => s.name)).size).toBe(FORK_SYSTEM_LIBRARY_SCRIPTS.length);
   });
 
   it('every script writes exactly the provisioned field keys through the write-back marker', () => {

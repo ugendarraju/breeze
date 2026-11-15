@@ -135,3 +135,19 @@ The person at a managed computer opens a per-device link (`/help#<token>`, usual
 | `apps/api/src/services/systemScriptLibrary.test.ts` | modified | Parameter env-var check accepts bash `$NAME` / `${NAME` for bash scripts |
 | `apps/web/src/components/devices/DeviceDetails.tsx` | modified | Tickets tab renders `DeviceHelpLinkPanel` above `DeviceTicketsTab` |
 | `apps/web/src/locales/*/devices.json`, `*/pages.json` (8 + 8 files) | modified | `deviceHelp.panel.*`, `deviceHelp.form.*`, `titles.deviceHelp` |
+## Device Drivers tab (fork)
+
+Windows only. Scan lists installed drivers and newer ones from Windows Update (matched by hardware ID) and from the maker's tool when installed (Dell Command Update, HP Image Assistant, Lenovo Thin Installer / System Update). Technician-confirmed installs; never restarts the device. All device work runs as system library scripts (no agent change).
+
+| Path | Change |
+|---|---|
+| `apps/api/src/services/driverScripts.ts` (+ `.test.ts`) | added: Driver Scan / Driver Install / Driver Tool Install (winget) scripts and output parsers |
+| `apps/api/src/services/batteryHealthScript.ts` | `FORK_SYSTEM_LIBRARY_SCRIPTS` also spreads `DRIVER_SCRIPTS` |
+| `apps/api/src/services/batteryHealthScript.test.ts` | fork-script count check counts battery scripts only |
+| `apps/api/src/routes/devices/drivers.ts` | added: `GET /devices/:id/drivers`, `POST .../drivers/scan`, `.../drivers/install`, `.../drivers/install-tool` |
+| `apps/api/src/routes/devices/index.ts` | mounts `driversRoutes` |
+| `apps/api/src/middleware/selfManagedDbContextRoutes.ts` | registers the three drivers POST routes |
+| `apps/api/src/services/mcpCoverage.ts` | `devices/drivers.ts` exempt (`human_only_oem_updates`) |
+| `apps/web/src/components/devices/DeviceDriversTab.tsx` (+ `.test.tsx`) | added: Drivers tab |
+| `apps/web/src/components/devices/DeviceDetails.tsx` | `drivers` tab (Windows, Inventory group under More) |
+| `apps/web/src/locales/*/devices.json` (8 files) | `deviceDrivers.*`, `deviceDetails.drivers`, `deviceDetails.driversTitle` |

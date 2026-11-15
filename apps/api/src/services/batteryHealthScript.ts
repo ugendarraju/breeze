@@ -5,6 +5,7 @@
 // are provisioned per partner by batteryHealthProvisioning.ts.
 import type { SystemLibraryScriptDefinition } from './systemScriptLibrary';
 import { HELP_SHORTCUT_SCRIPTS } from './deviceHelp/helpShortcutScripts';
+import { DRIVER_SCRIPTS } from './driverScripts';
 
 export const BATTERY_HEALTH_SCRIPT_NAME = 'Battery Health (Windows)';
 
@@ -163,4 +164,5 @@ export const BATTERY_HEALTH_SCRIPTS_BY_OS = [
 export const FORK_SYSTEM_LIBRARY_SCRIPTS: SystemLibraryScriptDefinition[] = [
   ...BATTERY_HEALTH_SCRIPTS_BY_OS.map((s) => s.script),
   ...HELP_SHORTCUT_SCRIPTS, // fork: services/deviceHelp/helpShortcutScripts.ts
+  ...DRIVER_SCRIPTS,
 ];
