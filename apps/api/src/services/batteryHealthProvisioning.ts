@@ -79,10 +79,10 @@ export async function provisionBatteryHealthForAllPartners(): Promise<{ partners
   for (const { id: partnerId } of live) {
     if (done.has(partnerId)) continue;
     const provisioned = await withSystemDbAccessContext(() => db.transaction(async (tx) => {
-      const [{ locked }] = (await tx.execute(
+      const lockRows = (await tx.execute(
         sql`SELECT pg_try_advisory_xact_lock(hashtext(${`fork:battery-health:${partnerId}`})) AS locked`,
       )) as unknown as Array<{ locked: boolean }>;
-      if (!locked) return false; // another API replica is on this partner right now
+      if (!lockRows[0]?.locked) return false; // another API replica is on this partner right now
       {
         const existingKeys = new Set(
           (

@@ -68,10 +68,10 @@ describe('help link token (derived, not stored)', () => {
   it('rejects a tampered token, a token for another device id, junk and a foreign key', () => {
     const token = mintHelpToken(DEVICE, 1);
     const raw = Buffer.from(token, 'base64url');
-    raw[0] ^= 0x01; // claim a different device with the same MAC
+    raw[0] = raw[0]! ^ 0x01; // claim a different device with the same MAC
     expect(parseHelpToken(raw.toString('base64url'))).toBeNull();
     const flippedMac = Buffer.from(token, 'base64url');
-    flippedMac[35] ^= 0x80;
+    flippedMac[35] = flippedMac[35]! ^ 0x80;
     expect(parseHelpToken(flippedMac.toString('base64url'))).toBeNull();
     expect(parseHelpToken('')).toBeNull();
     expect(parseHelpToken('x'.repeat(48))).toBeNull();

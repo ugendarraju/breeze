@@ -93,7 +93,7 @@ describe('PUT /devices/:id/warranty/manual (fork)', () => {
     [{ warrantyEndDate: '28/07/2020' }, 'non-ISO date'],
     [{ warrantyStartDate: '2020-07-28' }, 'missing end date'],
     [{ warrantyStartDate: '2021-01-01', warrantyEndDate: '2020-07-28' }, 'end before start'],
-  ])('rejects %j (%s) with 400 and writes nothing', async (body) => {
+  ] as Array<[Record<string, string>, string]>)('rejects %j (%s) with 400 and writes nothing', async (body) => {
     const res = await put(app, body);
     expect(res.status).toBe(400);
     expect(applyWarrantyImport).not.toHaveBeenCalled();
