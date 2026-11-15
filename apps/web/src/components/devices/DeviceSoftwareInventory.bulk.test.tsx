@@ -46,12 +46,13 @@ const batchReply = (body: BatchBody, programs: Record<string, string[]> = {}) =>
 function setup(opts: {
   fixture?: unknown;
   osType?: string;
-  lastRun?: unknown;
+  statuses?: () => unknown[];
   batch?: (body: BatchBody) => { payload: unknown; ok?: boolean };
 } = {}) {
   fetchMock.mockImplementation(async (url: unknown, init?: unknown) => {
     const u = String(url);
-    if (u.includes('/software/update-runs/latest')) return json({ run: opts.lastRun ?? null });
+    if (u.includes('/software/update-status')) return json({ packages: opts.statuses ? opts.statuses() : [] });
+    if (u.includes('/commands')) return json({ command: { id: 'refresh-1' } });
     if (u.includes('/software/update-batch')) {
       const body = JSON.parse(String((init as RequestInit).body)) as BatchBody;
       const reply = opts.batch ? opts.batch(body) : { payload: batchReply(body) };
@@ -195,21 +196,43 @@ describe('DeviceSoftwareInventory bulk updates (fork)', () => {
     expect(screen.queryByTestId('software-close-update-sw-obs')).toBeNull();
   });
 
-  it('shows the last update run with the programs that blocked it', async () => {
+  // fork: live per-row update status.
+  const status = (packageId: string, state: string, extra: Record<string, unknown> = {}) => ({
+    packageId, name: packageId, state, message: null, programs: [], commandId: `cmd-${packageId}`, updatedAt: '2026-11-15T06:00:00Z', ...extra,
+  });
+
+  it('shows each row\'s update status, including a one-line failure reason', async () => {
     setup({
-      lastRun: {
-        commandId: 'cmd-9',
-        status: 'failed',
-        createdAt: '2026-11-15T03:00:00Z',
-        completedAt: '2026-11-15T03:10:00Z',
-        packages: [
-          { packageId: 'Zoom.Zoom', name: 'Zoom', outcome: 'updated', exitCode: 0, programs: [] },
-          { packageId: 'OBSProject.OBSStudio', name: 'OBS Studio', outcome: 'blocked', exitCode: null, programs: ['Google Chrome', 'Opera'] },
-        ],
-      },
+      fixture: EXACT_FIXTURE,
+      statuses: () => [
+        status('OBSProject.OBSStudio', 'failed', { message: 'Files are in use by another program, installer exit code 6' }),
+      ],
     });
-    const panel = await screen.findByTestId('software-last-update-run');
-    expect(panel.textContent).toContain('Updated');
-    expect(panel.textContent).toContain('Not updated, still open: Google Chrome, Opera');
+    const line = await screen.findByTestId('software-update-status-OBSProject.OBSStudio');
+    expect(line.textContent).toBe('Update failed: Files are in use by another program, installer exit code 6');
+  });
+
+  it('shows a running update, blocks a second click, and polls until it finishes', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      let state = 'running';
+      setup({ fixture: FIXTURE, statuses: () => [status('Cloudflare.Warp', state)] });
+      const line = await screen.findByTestId('software-update-status-Cloudflare.Warp');
+      expect(line.textContent).toBe('Updating…');
+      const button = screen.getByTestId('software-update-sw-cloudflare') as HTMLButtonElement;
+      expect(button.disabled).toBe(true);
+      expect(button.title).toBe('An update for this app is already in progress.');
+
+      state = 'succeeded';
+      await vi.advanceTimersByTimeAsync(5_000);
+      await waitFor(() => expect(screen.getByTestId('software-update-status-Cloudflare.Warp').textContent).toBe('Updated'));
+      // A finished update asks the agent for a fresh software list.
+      await waitFor(() =>
+        expect(fetchMock.mock.calls.some(([u, init]) =>
+          String(u).includes('/commands') && String((init as RequestInit | undefined)?.body ?? '').includes('refresh_inventory'))).toBe(true),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

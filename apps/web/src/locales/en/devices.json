@@ -2499,13 +2499,13 @@
       "queuedOffline": "The device is offline: updates for {{names}} are queued without checking for open programs.",
       "queuedPlain": "Updates for {{names}} are queued; open programs were not checked.",
       "userNotified": "A notice was sent to the person at the device.",
-      "lastRun": "Last update run ({{when}})",
-      "refresh": "Refresh",
-      "outcomeUpdated": "Updated",
-      "outcomeUpToDate": "Already up to date",
-      "outcomeBlocked": "Not updated, still open: {{programs}}",
-      "outcomeFailed": "Failed (exit code {{code}})",
-      "outcomeFailedOpen": "Failed, files in use by: {{programs}}"
+      "statusQueued": "Update queued, waiting for the device",
+      "statusRunning": "Updating…",
+      "statusSucceeded": "Updated",
+      "statusUpToDate": "Already up to date",
+      "statusBlocked": "Not updated, still open: {{programs}}",
+      "statusFailed": "Update failed: {{message}}",
+      "alreadyRunning": "An update for this app is already in progress."
     },
     "closeUpdate": {
       "action": "Close & update",

@@ -208,32 +208,36 @@ describe('POST /devices/:id/software/update-batch', () => {
   });
 });
 
-describe('GET /devices/:id/software/update-runs/latest', () => {
-  it('returns the last run with each package outcome and its blockers', async () => {
-    inventory(() => [{
-      id: 'cmd-9',
-      status: 'failed',
-      createdAt: '2026-11-15T03:00:00Z',
-      completedAt: '2026-11-15T03:10:00Z',
-      result: {
-        stdout: [
-          'BREEZE_SOFTWARE_UPDATE {"phase":"update","packageId":"Zoom.Zoom","name":"Zoom","outcome":"updated","exitCode":0,"programs":[]}',
-          'BREEZE_SOFTWARE_UPDATE {"phase":"update","packageId":"OBSProject.OBSStudio","name":"OBS Studio","outcome":"blocked","exitCode":null,"programs":["Google Chrome","Opera"]}',
-        ].join('\n'),
+describe('GET /devices/:id/software/update-status', () => {
+  it('returns the latest state per package from recent update commands', async () => {
+    inventory(() => [
+      {
+        id: 'cmd-2', type: 'software_update', status: 'failed',
+        createdAt: '2026-11-15T05:32:55Z', completedAt: '2026-11-15T05:33:02Z',
+        payload: { name: 'OBSProject.OBSStudio', packageId: 'OBSProject.OBSStudio', displayName: 'OBS Studio' },
+        result: { error: 'Files modified by the installer are currently in use by a different application.\nInstaller failed with exit code: 6' },
       },
-    }]);
-    const res = await app.request('/devices/device-1/software/update-runs/latest');
+      {
+        id: 'cmd-1', type: 'software_update', status: 'completed',
+        createdAt: '2026-11-15T05:02:18Z', completedAt: '2026-11-15T05:02:35Z',
+        payload: { packageId: 'CodecGuide.K-LiteCodecPack.Standard', displayName: 'K-Lite Codec Pack 20.1.0 Standard' },
+        result: { status: 'completed', exitCode: 0 },
+      },
+    ]);
+    const res = await app.request('/devices/device-1/software/update-status');
     expect(res.status).toBe(200);
-    const { run } = await res.json();
-    expect(run.commandId).toBe('cmd-9');
-    expect(run.packages).toEqual([
-      { phase: 'update', packageId: 'Zoom.Zoom', name: 'Zoom', outcome: 'updated', exitCode: 0, programs: [] },
-      { phase: 'update', packageId: 'OBSProject.OBSStudio', name: 'OBS Studio', outcome: 'blocked', exitCode: null, programs: ['Google Chrome', 'Opera'] },
+    const { packages } = await res.json();
+    expect(packages).toEqual([
+      expect.objectContaining({
+        packageId: 'OBSProject.OBSStudio', name: 'OBS Studio', state: 'failed',
+        message: 'Files are in use by another program, installer exit code 6', commandId: 'cmd-2',
+      }),
+      expect.objectContaining({ packageId: 'CodecGuide.K-LiteCodecPack.Standard', state: 'succeeded', message: null }),
     ]);
   });
 
-  it('returns null when there has been no guarded run', async () => {
+  it('returns an empty list when nothing was updated recently', async () => {
     inventory(() => []);
-    expect(await (await app.request('/devices/device-1/software/update-runs/latest')).json()).toEqual({ run: null });
+    expect(await (await app.request('/devices/device-1/software/update-status')).json()).toEqual({ packages: [] });
   });
 });

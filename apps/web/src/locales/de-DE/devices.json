@@ -2499,13 +2499,13 @@
       "queuedOffline": "Das Gerät ist offline: Updates für {{names}} wurden eingereiht, ohne offene Programme zu prüfen.",
       "queuedPlain": "Updates für {{names}} wurden eingereiht; offene Programme wurden nicht geprüft.",
       "userNotified": "Die Person am Gerät wurde benachrichtigt.",
-      "lastRun": "Letzter Update-Lauf ({{when}})",
-      "refresh": "Aktualisieren",
-      "outcomeUpdated": "Aktualisiert",
-      "outcomeUpToDate": "Bereits aktuell",
-      "outcomeBlocked": "Nicht aktualisiert, noch geöffnet: {{programs}}",
-      "outcomeFailed": "Fehlgeschlagen (Exitcode {{code}})",
-      "outcomeFailedOpen": "Fehlgeschlagen, Dateien in Verwendung durch: {{programs}}"
+      "statusQueued": "Update eingereiht, wartet auf das Gerät",
+      "statusRunning": "Wird aktualisiert…",
+      "statusSucceeded": "Aktualisiert",
+      "statusUpToDate": "Bereits aktuell",
+      "statusBlocked": "Nicht aktualisiert, noch geöffnet: {{programs}}",
+      "statusFailed": "Update fehlgeschlagen: {{message}}",
+      "alreadyRunning": "Für diese App läuft bereits ein Update."
     },
     "closeUpdate": {
       "action": "Schließen & aktualisieren",

@@ -3,8 +3,11 @@ import {
   buildDetectScript,
   buildGuardedUpdateScript,
   buildUserNotification,
+  deriveUpdateStatuses,
   folderFromUninstallString,
   parseMarkers,
+  parsePackagesHeader,
+  summarizeUpdateError,
   resolveAppFolder,
   safeAppFolder,
   updateTimeoutSeconds,
@@ -139,6 +142,78 @@ describe('parseMarkers', () => {
 
   it('handles empty output', () => {
     expect(parseMarkers(undefined)).toEqual({ detect: [], update: [] });
+  });
+});
+
+describe('summarizeUpdateError', () => {
+  it('names the known installer and winget failures', () => {
+    expect(summarizeUpdateError('...Files modified by the installer are currently in use by a different application. ...\nInstaller failed with exit code: 6)'))
+      .toBe('Files are in use by another program, installer exit code 6');
+    expect(summarizeUpdateError('The `msstore` source requires that you view the following agreements before using.'))
+      .toBe('The Microsoft Store source needs interactive acceptance');
+    expect(summarizeUpdateError('failed: exit status 0x8a150014 (No installed package found matching input criteria.)'))
+      .toBe('winget could not find the installed package');
+  });
+
+  it('falls back to the exit status, the first line, or a generic message', () => {
+    expect(summarizeUpdateError('failed to update "X" after 1 attempt(s): winget.exe [upgrade]: exit status 0x8a15ffff (weird)'))
+      .toBe('The update failed (exit 0x8a15ffff)');
+    expect(summarizeUpdateError('something odd\nmore')).toBe('something odd');
+    expect(summarizeUpdateError(undefined)).toBe('The update failed without an error message');
+  });
+});
+
+describe('parsePackagesHeader', () => {
+  it('reads the batch listed in an update script', () => {
+    const script = buildGuardedUpdateScript([OBS, ZOOM], 'wait');
+    expect(parsePackagesHeader(script)).toEqual([
+      { packageId: 'OBSProject.OBSStudio', name: 'OBS Studio' },
+      { packageId: 'Zoom.Zoom', name: "Zoom's client" },
+    ]);
+    expect(parsePackagesHeader('no header')).toEqual([]);
+    expect(parsePackagesHeader('# BREEZE_PACKAGES not-json')).toEqual([]);
+  });
+});
+
+describe('deriveUpdateStatuses', () => {
+  const script = (status: string, stdout: string | null, id = 'cmd-s') => ({
+    id, type: 'script', status, createdAt: '2026-11-15T06:00:00Z', completedAt: status === 'completed' || status === 'failed' ? '2026-11-15T06:05:00Z' : null,
+    payload: { scriptId: 'software_update_guarded', content: buildGuardedUpdateScript([OBS, ZOOM], 'wait') },
+    result: stdout === null ? null : { stdout },
+  });
+
+  it('shows every package in a running batch as running', () => {
+    expect(deriveUpdateStatuses([script('sent', null)]).map((s) => [s.packageId, s.state])).toEqual([
+      ['OBSProject.OBSStudio', 'running'],
+      ['Zoom.Zoom', 'running'],
+    ]);
+  });
+
+  it('turns a finished batch into per-package outcomes', () => {
+    const stdout = [
+      'BREEZE_SOFTWARE_UPDATE {"phase":"update","packageId":"Zoom.Zoom","name":"Zoom\'s client","outcome":"updated","exitCode":0,"programs":[]}',
+      'BREEZE_SOFTWARE_UPDATE {"phase":"update","packageId":"OBSProject.OBSStudio","name":"OBS Studio","outcome":"blocked","exitCode":null,"programs":["Google Chrome"]}',
+    ].join('\n');
+    const statuses = deriveUpdateStatuses([script('failed', stdout)]);
+    expect(statuses).toEqual([
+      expect.objectContaining({ packageId: 'OBSProject.OBSStudio', state: 'blocked', programs: ['Google Chrome'] }),
+      expect.objectContaining({ packageId: 'Zoom.Zoom', state: 'succeeded', message: null }),
+    ]);
+  });
+
+  it('reports a package the script never reached as failed', () => {
+    const statuses = deriveUpdateStatuses([{ ...script('timeout', null), result: { error: 'Command timed out after 960000ms' } }]);
+    expect(statuses.every((s) => s.state === 'failed')).toBe(true);
+    expect(statuses[0]!.message).toBe('Command timed out after 960000ms');
+  });
+
+  it('keeps only the newest status per package and maps plain update commands', () => {
+    const statuses = deriveUpdateStatuses([
+      { id: 'new', type: 'software_update', status: 'pending', createdAt: '2026-11-15T07:00:00Z', completedAt: null, payload: { packageId: 'Zoom.Zoom', displayName: 'Zoom' }, result: null },
+      { id: 'old', type: 'software_update', status: 'failed', createdAt: '2026-11-15T06:00:00Z', completedAt: null, payload: { packageId: 'Zoom.Zoom' }, result: { error: 'x' } },
+      { id: 'noid', type: 'software_update', status: 'completed', createdAt: '2026-11-15T06:00:00Z', completedAt: null, payload: { name: 'Legacy' }, result: null },
+    ]);
+    expect(statuses).toEqual([expect.objectContaining({ packageId: 'Zoom.Zoom', name: 'Zoom', state: 'queued', commandId: 'new' })]);
   });
 });
 

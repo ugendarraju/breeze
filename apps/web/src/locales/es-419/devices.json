@@ -2499,13 +2499,13 @@
       "queuedOffline": "El dispositivo está sin conexión: las actualizaciones de {{names}} quedaron en cola sin revisar programas abiertos.",
       "queuedPlain": "Las actualizaciones de {{names}} quedaron en cola; no se revisaron programas abiertos.",
       "userNotified": "Se envió un aviso a la persona del dispositivo.",
-      "lastRun": "Última ejecución de actualizaciones ({{when}})",
-      "refresh": "Actualizar",
-      "outcomeUpdated": "Actualizado",
-      "outcomeUpToDate": "Ya está actualizado",
-      "outcomeBlocked": "No actualizado, sigue abierto: {{programs}}",
-      "outcomeFailed": "Error (código de salida {{code}})",
-      "outcomeFailedOpen": "Error, archivos en uso por: {{programs}}"
+      "statusQueued": "Actualización en cola, esperando al dispositivo",
+      "statusRunning": "Actualizando…",
+      "statusSucceeded": "Actualizado",
+      "statusUpToDate": "Ya está actualizado",
+      "statusBlocked": "No actualizado, sigue abierto: {{programs}}",
+      "statusFailed": "La actualización falló: {{message}}",
+      "alreadyRunning": "Ya hay una actualización en curso para esta app."
     },
     "closeUpdate": {
       "action": "Cerrar y actualizar",

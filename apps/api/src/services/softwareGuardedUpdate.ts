@@ -110,6 +110,54 @@ function packagesBlock(packages: GuardedPackage[]): string {
   return `$packages = @(\n${rows.join(',\n')}\n)`;
 }
 
+const PACKAGES_HEADER = 'BREEZE_PACKAGES';
+
+/** A comment line listing the batch, so the API can show per-package status while it runs. */
+function packagesHeader(packages: GuardedPackage[]): string {
+  const list = packages.map((p) => ({ packageId: p.packageId, name: p.name.replace(/[\r\n]/g, ' ').slice(0, 200) }));
+  return `# ${PACKAGES_HEADER} ${JSON.stringify(list)}`;
+}
+
+/** The batch listed in an update script's header line (empty when absent or malformed). */
+export function parsePackagesHeader(content: string | null | undefined): Array<{ packageId: string; name: string }> {
+  const match = new RegExp(`^# ${PACKAGES_HEADER} (.+)$`, 'm').exec(content ?? '');
+  if (!match) return [];
+  try {
+    const list = JSON.parse(match[1]!) as unknown;
+    if (!Array.isArray(list)) return [];
+    return list
+      .filter((p): p is { packageId: string; name: string } =>
+        !!p && typeof p === 'object' && typeof (p as Record<string, unknown>).packageId === 'string'
+        && typeof (p as Record<string, unknown>).name === 'string')
+      .map((p) => ({ packageId: p.packageId, name: p.name }));
+  } catch {
+    return [];
+  }
+}
+
+/** Installer/winget messages worth showing a technician, most specific first. */
+const KNOWN_ERRORS: Array<[RegExp, string]> = [
+  [/currently in use by a different application/i, 'Files are in use by another program'],
+  [/msstore.{0,40}agreements|requires that you view the following agreements/i, 'The Microsoft Store source needs interactive acceptance'],
+  [/No installed package found/i, 'winget could not find the installed package'],
+  [/No (?:available|applicable) (?:upgrade|update)/i, 'No newer version is available from winget'],
+  [/winget was not found/i, 'winget is not available on this device'],
+  [/requires? (?:a )?(?:restart|reboot)/i, 'A restart is required'],
+];
+
+/** A one-line reason for a failed update, for the Software tab; the full text stays in the command result. */
+export function summarizeUpdateError(text: string | null | undefined): string {
+  const raw = (text ?? '').trim();
+  if (!raw) return 'The update failed without an error message';
+  const parts: string[] = [];
+  for (const [pattern, label] of KNOWN_ERRORS) if (pattern.test(raw)) parts.push(label);
+  const installer = /Installer failed with exit code:\s*(-?\d+)/i.exec(raw);
+  if (installer) parts.push(`installer exit code ${installer[1]}`);
+  if (parts.length > 0) return parts.join(', ');
+  const status = /exit status (0x[0-9a-f]+|-?\d+)/i.exec(raw);
+  return status ? `The update failed (exit ${status[1]})` : raw.split(/\r?\n/)[0]!.slice(0, 200);
+}
+
 /** Shared helpers: blocker detection (never the script, its parents, or core Windows processes). */
 const COMMON = `$ErrorActionPreference = 'Continue'
 $protected = @('System','Idle','Registry','smss','csrss','wininit','winlogon','services','lsass','svchost','dwm','fontdrvhost','MsMpEng','explorer','sihost','ctfmon')
@@ -243,6 +291,7 @@ const WAIT_BLOCK = `    $names = (Get-Labels $blockers) -join ', '
 /** Update: unblocked packages first, then wait for (or force-stop) blockers and update the rest. */
 export function buildGuardedUpdateScript(packages: GuardedPackage[], mode: UpdateMode): string {
   return `# Breeze: guarded software update (server-generated, mode: ${mode})
+${packagesHeader(packages)}
 ${packagesBlock(packages)}
 # mode: ${mode}
 $waitSeconds = ${BLOCKER_WAIT_SECONDS}
@@ -349,6 +398,101 @@ export function parseMarkers(stdout: string | null | undefined): { detect: Detec
     }
   }
   return { detect, update };
+}
+
+export type UpdateState = 'queued' | 'running' | 'succeeded' | 'up_to_date' | 'blocked' | 'failed';
+
+export interface PackageUpdateStatus {
+  packageId: string;
+  name: string;
+  state: UpdateState;
+  /** One-line reason for 'failed'; null otherwise. */
+  message: string | null;
+  /** Programs that held the package's files ('blocked', or a 'failed' in-use). */
+  programs: string[];
+  commandId: string;
+  updatedAt: string;
+}
+
+/** An update command row as read from device_commands (software_update or the guarded script). */
+export interface UpdateCommandRow {
+  id: string;
+  type: string;
+  status: string;
+  createdAt: Date | string;
+  completedAt: Date | string | null;
+  payload: unknown;
+  result: unknown;
+}
+
+const iso = (value: Date | string | null) => (value instanceof Date ? value.toISOString() : value ?? '');
+
+function commandPhase(status: string): 'queued' | 'running' | 'done' | 'failed' {
+  if (status === 'pending' || status === 'queued') return 'queued';
+  if (status === 'completed') return 'done';
+  if (status === 'sent' || status === 'running' || status === 'executing' || status === 'claimed') return 'running';
+  return 'failed'; // failed, timeout, cancelled, expired, ...
+}
+
+/**
+ * Latest update status per package (by winget id) from a device's recent update
+ * commands, newest first. A guarded script reports every package in its batch:
+ * queued/running from its header while it runs, then its per-package markers.
+ */
+export function deriveUpdateStatuses(rowsNewestFirst: UpdateCommandRow[]): PackageUpdateStatus[] {
+  const byPackage = new Map<string, PackageUpdateStatus>();
+  const put = (s: PackageUpdateStatus) => {
+    const key = s.packageId.toLowerCase();
+    if (!byPackage.has(key)) byPackage.set(key, s);
+  };
+  for (const row of rowsNewestFirst) {
+    const payload = (row.payload ?? {}) as Record<string, unknown>;
+    const result = (row.result ?? {}) as Record<string, unknown>;
+    const phase = commandPhase(row.status);
+    const updatedAt = iso(row.completedAt ?? row.createdAt);
+    const errorText = [result.error, result.stderr, result.stdout].find((v) => typeof v === 'string' && v.trim()) as string | undefined;
+
+    if (row.type === 'software_update') {
+      const packageId = typeof payload.packageId === 'string' ? payload.packageId : null;
+      if (!packageId) continue;
+      const name = typeof payload.displayName === 'string' ? payload.displayName : String(payload.name ?? packageId);
+      const state: UpdateState = phase === 'done' ? 'succeeded' : phase;
+      put({
+        packageId, name, state,
+        message: state === 'failed' ? summarizeUpdateError(errorText) : null,
+        programs: [], commandId: row.id, updatedAt,
+      });
+      continue;
+    }
+
+    // Guarded script: the batch from its header, outcomes from its markers.
+    const listed = parsePackagesHeader(typeof payload.content === 'string' ? payload.content : null);
+    const markers = parseMarkers(typeof result.stdout === 'string' ? result.stdout : null).update;
+    const outcomeById = new Map(markers.map((m) => [m.packageId.toLowerCase(), m]));
+    const packages = listed.length > 0 ? listed : markers.map((m) => ({ packageId: m.packageId, name: m.name }));
+    for (const pkg of packages) {
+      const marker = outcomeById.get(pkg.packageId.toLowerCase());
+      if (phase === 'queued' || phase === 'running') {
+        put({ ...pkg, state: phase, message: null, programs: [], commandId: row.id, updatedAt });
+      } else if (marker) {
+        const state: UpdateState = marker.outcome === 'updated' ? 'succeeded' : marker.outcome;
+        put({
+          ...pkg,
+          state,
+          message: state === 'failed'
+            ? (marker.programs.length > 0 ? 'Files are in use by another program' : `The update failed (exit ${marker.exitCode ?? '?'})`)
+            : null,
+          programs: marker.programs,
+          commandId: row.id,
+          updatedAt,
+        });
+      } else {
+        // The script ended without reporting this package (timeout, crash).
+        put({ ...pkg, state: 'failed', message: summarizeUpdateError(errorText), programs: [], commandId: row.id, updatedAt });
+      }
+    }
+  }
+  return [...byPackage.values()];
 }
 
 /** The message shown to the person signed in to the device. */

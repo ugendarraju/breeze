@@ -12,12 +12,13 @@
  * An offline device, or a caller without scripts.execute, falls back to the
  * plain queued `software_update` command per package (no detection/notice).
  *
- * GET /devices/:id/software/update-runs/latest — the last guarded run's
- * per-package outcome and the programs that blocked it (for the technician).
+ * GET /devices/:id/software/update-status — the latest update state per
+ * package over the last day (queued / running / succeeded / up to date /
+ * blocked / failed with a one-line reason), for the Software tab's live status.
  */
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, or, sql } from 'drizzle-orm';
 import { zValidator } from '../../lib/validation';
 import { authMiddleware, requireMfa, requireScope, requirePermission } from '../../middleware/auth';
 import { PERMISSIONS, hasPermission, type UserPermissions } from '../../services/permissions';
@@ -37,6 +38,7 @@ import {
   buildDetectScript,
   buildGuardedUpdateScript,
   buildUserNotification,
+  deriveUpdateStatuses,
   parseMarkers,
   resolveAppFolder,
   updateTimeoutSeconds,
@@ -50,6 +52,7 @@ softwareUpdateBatchRoutes.use('*', authMiddleware);
 
 const DETECT_WAIT_MS = 45_000;
 const NOTIFY_DELIVER_WITHIN_MS = 15 * 60_000;
+const STATUS_WINDOW_MS = 24 * 60 * 60_000;
 
 const updateBatchSchema = z
   .object({
@@ -232,7 +235,7 @@ softwareUpdateBatchRoutes.post(
 );
 
 softwareUpdateBatchRoutes.get(
-  '/:id/software/update-runs/latest',
+  '/:id/software/update-status',
   requireScope('organization', 'partner', 'system'),
   requirePermission(PERMISSIONS.DEVICES_READ.resource, PERMISSIONS.DEVICES_READ.action),
   async (c) => {
@@ -244,35 +247,31 @@ softwareUpdateBatchRoutes.get(
       return c.json({ error: 'Access to this site denied' }, 403);
     }
 
-    const [row] = await db
+    // Plain software_update commands and guarded update scripts from the last day.
+    const rows = await db
       .select({
         id: deviceCommands.id,
+        type: deviceCommands.type,
         status: deviceCommands.status,
         createdAt: deviceCommands.createdAt,
         completedAt: deviceCommands.completedAt,
+        payload: deviceCommands.payload,
         result: deviceCommands.result,
       })
       .from(deviceCommands)
       .where(
         and(
           eq(deviceCommands.deviceId, deviceId),
-          eq(deviceCommands.type, 'script'),
-          sql`${deviceCommands.payload}->>'scriptId' = ${UPDATE_PROVENANCE}`
+          gte(deviceCommands.createdAt, new Date(Date.now() - STATUS_WINDOW_MS)),
+          or(
+            eq(deviceCommands.type, CommandTypes.SOFTWARE_UPDATE),
+            and(eq(deviceCommands.type, 'script'), sql`${deviceCommands.payload}->>'scriptId' = ${UPDATE_PROVENANCE}`)
+          )
         )
       )
       .orderBy(desc(deviceCommands.createdAt))
-      .limit(1);
-    if (!row) return c.json({ run: null });
+      .limit(100);
 
-    const result = row.result as { stdout?: string } | null;
-    return c.json({
-      run: {
-        commandId: row.id,
-        status: row.status,
-        createdAt: row.createdAt,
-        completedAt: row.completedAt,
-        packages: parseMarkers(result?.stdout).update,
-      },
-    });
+    return c.json({ packages: deriveUpdateStatuses(rows) });
   }
 );
