@@ -1,4 +1,5 @@
-// fork: "Updates only" filter and bulk update on the device Software tab.
+// fork: "Updates only" filter, bulk update, guarded Windows updates (one batch
+// request per action) and the last-update-run panel on the device Software tab.
 import '@/lib/i18n';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -23,21 +24,47 @@ const FIXTURE = {
     { id: 'sw-7zip', name: '7-Zip', version: '26.04', publisher: 'Igor Pavlov' },
   ],
 };
+// OBS Studio regression: a provider-prefixed id, an id the agent can't take, and no id.
+const EXACT_FIXTURE = {
+  thirdPartyUpdatesManaged: false,
+  data: [
+    { id: 'sw-obs', name: 'OBS Studio', version: '32.0.1', publisher: 'OBS Project', updateAvailable: true, availableVersion: '33.0.0', updatePackageId: 'winget:OBSProject.OBSStudio' },
+    { id: 'sw-zoom', name: 'Zoom', version: '7.1', publisher: 'Zoom', updateAvailable: true, availableVersion: '7.2', updatePackageId: 'OBSolete+Id' },
+    { id: 'sw-mystery', name: 'Mystery App', version: '1.0', publisher: 'Acme', updateAvailable: true, availableVersion: '2.0', updatePackageId: null },
+  ],
+};
 
-function setup(updateOk: (body: { name: string }) => boolean = () => true, fixture: unknown = FIXTURE) {
+type BatchBody = { items: Array<{ name: string; packageId?: string }>; mode: string };
+const batchReply = (body: BatchBody, programs: Record<string, string[]> = {}) => ({
+  success: true,
+  delivery: 'script',
+  packages: body.items.map((i) => ({ name: i.name, packageId: i.packageId ?? i.name, programs: programs[i.name] ?? [] })),
+  skipped: [],
+  notified: true,
+});
+
+function setup(opts: {
+  fixture?: unknown;
+  osType?: string;
+  lastRun?: unknown;
+  batch?: (body: BatchBody) => { payload: unknown; ok?: boolean };
+} = {}) {
   fetchMock.mockImplementation(async (url: unknown, init?: unknown) => {
     const u = String(url);
-    if (u.includes('/software/update')) {
-      const body = JSON.parse(String((init as RequestInit).body)) as { name: string };
-      return json(updateOk(body) ? { success: true } : { error: 'boom' }, updateOk(body));
+    if (u.includes('/software/update-runs/latest')) return json({ run: opts.lastRun ?? null });
+    if (u.includes('/software/update-batch')) {
+      const body = JSON.parse(String((init as RequestInit).body)) as BatchBody;
+      const reply = opts.batch ? opts.batch(body) : { payload: batchReply(body) };
+      return json(reply.payload, reply.ok ?? true);
     }
-    if (u.includes('/software')) return json(fixture);
+    if (u.includes('/software/update')) return json({ success: true });
+    if (u.includes('/software')) return json(opts.fixture ?? FIXTURE);
     return json({});
   });
-  render(<DeviceSoftwareInventory deviceId={deviceId} osType="windows" />);
+  render(<DeviceSoftwareInventory deviceId={deviceId} osType={opts.osType ?? 'windows'} />);
 }
 
-const updatePosts = () => fetchMock.mock.calls.filter(([u]) => String(u).includes('/software/update'));
+const batchPosts = () => fetchMock.mock.calls.filter(([u]) => String(u).includes('/software/update-batch'));
 const bodyOf = (call: unknown[] | undefined) => JSON.parse(String((call?.[1] as RequestInit).body));
 
 describe('DeviceSoftwareInventory bulk updates (fork)', () => {
@@ -62,74 +89,85 @@ describe('DeviceSoftwareInventory bulk updates (fork)', () => {
     expect(screen.queryByTestId('software-select-sw-7zip')).toBeNull();
   });
 
-  it('select all + update selected queues each update once and shows one summary', async () => {
+  it('Windows: select all + update selected sends ONE batch request and one summary', async () => {
     setup();
     await screen.findByText('7-Zip');
     fireEvent.click(screen.getByTestId('software-select-all-updates'));
     fireEvent.click(screen.getByTestId('software-update-selected'));
-    await waitFor(() => expect(updatePosts()).toHaveLength(2));
-    expect(updatePosts().map(bodyOf)).toEqual([
-      { name: 'Adobe Acrobat', packageId: 'Adobe.Acrobat.Reader.64-bit' },
-      { name: 'Cloudflare One Client', packageId: 'Cloudflare.Warp' },
-    ]);
-    await waitFor(() => expect(toastMock).toHaveBeenCalledWith(expect.objectContaining({ type: 'success' })));
-    expect(toastMock.mock.calls.filter(([a]) => (a as { type: string }).type === 'success')).toHaveLength(1);
+    await waitFor(() => expect(batchPosts()).toHaveLength(1));
+    expect(bodyOf(batchPosts()[0])).toEqual({
+      items: [
+        { name: 'Adobe Acrobat', packageId: 'Adobe.Acrobat.Reader.64-bit' },
+        { name: 'Cloudflare One Client', packageId: 'Cloudflare.Warp' },
+      ],
+      mode: 'wait',
+    });
+    await waitFor(() =>
+      expect(toastMock).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'success', message: expect.stringContaining('Updating Adobe Acrobat, Cloudflare One Client.') }),
+      ),
+    );
     expect(screen.queryByTestId('software-update-selected')).toBeNull(); // selection cleared
   });
 
-  it('updates only the rows the technician ticked', async () => {
-    setup();
+  it('Windows: the summary names the programs the user is asked to close', async () => {
+    setup({ batch: (body) => ({ payload: batchReply(body, { 'Cloudflare One Client': ['Google Chrome', 'Opera'] }) }) });
     await screen.findByText('7-Zip');
     fireEvent.click(screen.getByTestId('software-select-sw-cloudflare'));
     fireEvent.click(screen.getByTestId('software-update-selected'));
-    await waitFor(() => expect(updatePosts()).toHaveLength(1));
-    expect(bodyOf(updatePosts()[0]).name).toBe('Cloudflare One Client');
-  });
-
-  it('reports a partial failure in the summary', async () => {
-    setup((body) => body.name !== 'Adobe Acrobat');
-    await screen.findByText('7-Zip');
-    fireEvent.click(screen.getByTestId('software-select-all-updates'));
-    fireEvent.click(screen.getByTestId('software-update-selected'));
-    await waitFor(() => expect(updatePosts()).toHaveLength(2));
+    await waitFor(() => expect(batchPosts()).toHaveLength(1));
+    expect(bodyOf(batchPosts()[0]).items).toEqual([{ name: 'Cloudflare One Client', packageId: 'Cloudflare.Warp' }]);
     await waitFor(() =>
-      expect(toastMock).toHaveBeenCalledWith(expect.objectContaining({ type: 'error', message: expect.stringMatching(/1 of 2/) })),
+      expect(toastMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.stringMatching(/Waiting for the user to close Google Chrome, Opera so Cloudflare One Client can update\. A notice was sent/),
+        }),
+      ),
     );
   });
 
-  // fork: OBS Studio regression — a Windows update must carry the exact winget
-  // id; rows without one are disabled and skipped by bulk update.
-  const EXACT_FIXTURE = {
-    thirdPartyUpdatesManaged: false,
-    data: [
-      { id: 'sw-obs', name: 'OBS Studio', version: '32.0.1', publisher: 'OBS Project', updateAvailable: true, availableVersion: '33.0.0', updatePackageId: 'winget:OBSProject.OBSStudio' },
-      { id: 'sw-zoom', name: 'Zoom', version: '7.1', publisher: 'Zoom', updateAvailable: true, availableVersion: '7.2', updatePackageId: 'OBSolete+Id' },
-      { id: 'sw-mystery', name: 'Mystery App', version: '1.0', publisher: 'Acme', updateAvailable: true, availableVersion: '2.0', updatePackageId: null },
-    ],
-  };
-
-  it('sends the bare winget id even when the list carries the provider-prefixed form', async () => {
-    setup(() => true, EXACT_FIXTURE);
-    await screen.findByText('OBS Studio');
-    fireEvent.click(screen.getByTestId('software-select-sw-obs'));
+  it('Windows: a refused batch shows an error toast', async () => {
+    setup({ batch: () => ({ payload: { error: 'Device is offline' }, ok: false }) });
+    await screen.findByText('7-Zip');
+    fireEvent.click(screen.getByTestId('software-select-all-updates'));
     fireEvent.click(screen.getByTestId('software-update-selected'));
-    await waitFor(() => expect(updatePosts()).toHaveLength(1));
-    expect(bodyOf(updatePosts()[0])).toEqual({ name: 'OBS Studio', packageId: 'OBSProject.OBSStudio' });
+    await waitFor(() =>
+      expect(toastMock).toHaveBeenCalledWith(expect.objectContaining({ type: 'error', message: expect.stringContaining('Device is offline') })),
+    );
   });
 
-  it('disables Update with a reason when the exact package is unknown, and bulk skips it with a count', async () => {
-    setup(() => true, EXACT_FIXTURE);
+  it('non-Windows bulk update still queues one plain update per row', async () => {
+    setup({ osType: 'linux' });
+    await screen.findByText('7-Zip');
+    fireEvent.click(screen.getByTestId('software-select-all-updates'));
+    fireEvent.click(screen.getByTestId('software-update-selected'));
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.filter(([u]) => String(u).endsWith('/software/update'))).toHaveLength(2),
+    );
+    expect(batchPosts()).toHaveLength(0);
+  });
+
+  it('sends the bare winget id even when the list carries the provider-prefixed form', async () => {
+    setup({ fixture: EXACT_FIXTURE });
+    await screen.findByText('OBS Studio');
+    fireEvent.click(screen.getByTestId('software-update-sw-obs'));
+    await waitFor(() => expect(batchPosts()).toHaveLength(1));
+    expect(bodyOf(batchPosts()[0])).toEqual({ items: [{ name: 'OBS Studio', packageId: 'OBSProject.OBSStudio' }], mode: 'wait' });
+  });
+
+  it('disables Update with a reason when the exact package is unknown, and bulk reports them as skipped', async () => {
+    setup({ fixture: EXACT_FIXTURE });
     await screen.findByText('Mystery App');
     expect(screen.queryByTestId('software-select-sw-mystery')).toBeNull();
     expect(screen.queryByTestId('software-select-sw-zoom')).toBeNull();
-    const reason = /exact winget package for this update isn't known/;
-    const disabled = screen.getAllByTitle(reason);
+    const disabled = screen.getAllByTitle(/exact winget package for this update isn't known/);
     expect(disabled).toHaveLength(2);
     disabled.forEach((button) => expect((button as HTMLButtonElement).disabled).toBe(true));
 
     fireEvent.click(screen.getByTestId('software-select-all-updates'));
     fireEvent.click(screen.getByTestId('software-update-selected'));
-    await waitFor(() => expect(updatePosts()).toHaveLength(1));
+    await waitFor(() => expect(batchPosts()).toHaveLength(1));
+    expect(bodyOf(batchPosts()[0]).items).toEqual([{ name: 'OBS Studio', packageId: 'OBSProject.OBSStudio' }]);
     await waitFor(() =>
       expect(toastMock).toHaveBeenCalledWith(
         expect.objectContaining({ type: 'success', message: expect.stringMatching(/2 skipped: exact package unknown/) }),
@@ -137,30 +175,41 @@ describe('DeviceSoftwareInventory bulk updates (fork)', () => {
     );
   });
 
-  // fork: "Close & update" — force-close what uses the app's files, then update.
-  it('Close & update asks for confirmation, then posts the exact id to close-and-update', async () => {
-    setup(() => true, EXACT_FIXTURE);
+  it('Close & update asks for confirmation, then sends a force batch for the exact id', async () => {
+    setup({ fixture: EXACT_FIXTURE });
     await screen.findByText('OBS Studio');
-    // Only rows that can be updated get the button.
     expect(screen.queryByTestId('software-close-update-sw-mystery')).toBeNull();
 
     fireEvent.click(screen.getByTestId('software-close-update-sw-obs'));
     expect(screen.getByText(/Unsaved work in those programs will be lost/)).toBeTruthy();
-    expect(fetchMock.mock.calls.some(([u]) => String(u).includes('close-and-update'))).toBe(false);
+    expect(batchPosts()).toHaveLength(0);
 
     fireEvent.click(screen.getByTestId('confirm-close-update'));
-    await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith(
-        `/devices/${deviceId}/software/close-and-update`,
-        expect.objectContaining({ method: 'POST', body: JSON.stringify({ name: 'OBS Studio', packageId: 'OBSProject.OBSStudio' }) }),
-      ),
-    );
+    await waitFor(() => expect(batchPosts()).toHaveLength(1));
+    expect(bodyOf(batchPosts()[0])).toEqual({ items: [{ name: 'OBS Studio', packageId: 'OBSProject.OBSStudio' }], mode: 'force' });
   });
 
   it('Close & update is not offered off Windows', async () => {
-    fetchMock.mockImplementation(async () => json(EXACT_FIXTURE));
-    render(<DeviceSoftwareInventory deviceId={deviceId} osType="linux" />);
+    setup({ fixture: EXACT_FIXTURE, osType: 'linux' });
     await screen.findByText('OBS Studio');
     expect(screen.queryByTestId('software-close-update-sw-obs')).toBeNull();
+  });
+
+  it('shows the last update run with the programs that blocked it', async () => {
+    setup({
+      lastRun: {
+        commandId: 'cmd-9',
+        status: 'failed',
+        createdAt: '2026-11-15T03:00:00Z',
+        completedAt: '2026-11-15T03:10:00Z',
+        packages: [
+          { packageId: 'Zoom.Zoom', name: 'Zoom', outcome: 'updated', exitCode: 0, programs: [] },
+          { packageId: 'OBSProject.OBSStudio', name: 'OBS Studio', outcome: 'blocked', exitCode: null, programs: ['Google Chrome', 'Opera'] },
+        ],
+      },
+    });
+    const panel = await screen.findByTestId('software-last-update-run');
+    expect(panel.textContent).toContain('Updated');
+    expect(panel.textContent).toContain('Not updated, still open: Google Chrome, Opera');
   });
 });

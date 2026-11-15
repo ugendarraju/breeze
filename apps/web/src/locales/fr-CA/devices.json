@@ -2492,13 +2492,27 @@
     "purchaseDateVendorHint": "Issue de la date d’expédition du fabricant. Saisissez une date pour la remplacer."
   },
   "deviceSoftwareInventory": {
+    "guarded": {
+      "updating": "Mise à jour de {{names}}.",
+      "waiting": "En attente que l’utilisateur ferme {{programs}} pour mettre à jour {{names}}.",
+      "closing": "Fermeture de {{programs}}, puis mise à jour de {{names}}.",
+      "queuedOffline": "L’appareil est hors ligne : les mises à jour de {{names}} sont en file d’attente sans vérification des programmes ouverts.",
+      "queuedPlain": "Les mises à jour de {{names}} sont en file d’attente; les programmes ouverts n’ont pas été vérifiés.",
+      "userNotified": "Un avis a été envoyé à la personne sur l’appareil.",
+      "lastRun": "Dernière exécution des mises à jour ({{when}})",
+      "refresh": "Actualiser",
+      "outcomeUpdated": "Mis à jour",
+      "outcomeUpToDate": "Déjà à jour",
+      "outcomeBlocked": "Non mis à jour, toujours ouvert : {{programs}}",
+      "outcomeFailed": "Échec (code de sortie {{code}})",
+      "outcomeFailedOpen": "Échec, fichiers utilisés par : {{programs}}"
+    },
     "closeUpdate": {
       "action": "Fermer et mettre à jour",
       "title": "Forcer la fermeture de l’app et de tout ce qui utilise ses fichiers, puis mettre à jour",
       "confirmTitle": "Fermer {{name}} et mettre à jour?",
       "confirmMessage": "Breeze forcera la fermeture de {{name}} et de tout autre programme qui utilise ses fichiers sur cet appareil, puis installera la mise à jour. Cela peut inclure des apps comme Teams, Zoom ou un navigateur. Le travail non enregistré dans ces programmes sera perdu.",
-      "confirmHint": "À utiliser seulement quand personne ne travaille sur l’appareil, ou après l’enregistrement du travail.",
-      "queued": "Fermeture de « {{name}} » et mise à jour"
+      "confirmHint": "À utiliser seulement quand personne ne travaille sur l’appareil, ou après l’enregistrement du travail."
     },
     "actions": {
       "uninstall": "Désinstaller",

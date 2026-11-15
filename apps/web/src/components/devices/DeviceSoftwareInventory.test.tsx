@@ -7,15 +7,23 @@ import DeviceSoftwareInventory from './DeviceSoftwareInventory';
 import { fetchWithAuth } from '../../stores/auth';
 import { showToast } from '../shared/Toast';
 
+// fork: the Software tab also reads the last guarded update run on load
+// (Windows); answer that request here so the ordered mocks below stay aligned.
+const inner = vi.hoisted(() => vi.fn());
 vi.mock('../../stores/auth', () => ({
-  fetchWithAuth: vi.fn(),
+  fetchWithAuth: vi.fn((url: unknown, init?: unknown) =>
+    String(url).includes('/software/update-runs/')
+      ? Promise.resolve({ ok: true, status: 200, json: async () => ({ run: null }) })
+      : inner(url, init)
+  ),
 }));
 
 vi.mock('../shared/Toast', () => ({
   showToast: vi.fn(),
 }));
 
-const fetchWithAuthMock = vi.mocked(fetchWithAuth);
+void fetchWithAuth;
+const fetchWithAuthMock = inner;
 const showToastMock = vi.mocked(showToast);
 
 const makeJsonResponse = (payload: unknown, ok = true, status = ok ? 200 : 500): Response =>
@@ -91,7 +99,13 @@ describe('DeviceSoftwareInventory action buttons', () => {
   it('queues an update via POST /devices/:id/software/update and shows success toast', async () => {
     fetchWithAuthMock
       .mockResolvedValueOnce(makeJsonResponse(SOFTWARE_FIXTURE))
-      .mockResolvedValueOnce(makeJsonResponse({ success: true, commandId: 'cmd-1', action: 'update' }));
+      .mockResolvedValueOnce(makeJsonResponse({
+        success: true,
+        delivery: 'script',
+        packages: [{ name: 'Google Chrome', packageId: 'Google.Chrome', programs: [] }],
+        skipped: [],
+        notified: false,
+      }));
 
     render(<DeviceSoftwareInventory deviceId={deviceId} osType="windows" />);
 
@@ -99,13 +113,13 @@ describe('DeviceSoftwareInventory action buttons', () => {
     fireEvent.click(updateBtn);
 
     await waitFor(() => {
+      // fork: Windows updates go through the guarded batch endpoint with the
+      // exact winget id (never a pinned version).
       expect(fetchWithAuthMock).toHaveBeenCalledWith(
-        `/devices/${deviceId}/software/update`,
+        `/devices/${deviceId}/software/update-batch`,
         expect.objectContaining({
           method: 'POST',
-          // Updates send the winget packageId (not a pinned version) so the
-          // agent upgrades by --id to the latest available.
-          body: JSON.stringify({ name: 'Google Chrome', packageId: 'Google.Chrome' }),
+          body: JSON.stringify({ items: [{ name: 'Google Chrome', packageId: 'Google.Chrome' }], mode: 'wait' }),
         })
       );
     });
@@ -114,7 +128,7 @@ describe('DeviceSoftwareInventory action buttons', () => {
       expect(showToastMock).toHaveBeenCalledWith(
         expect.objectContaining({
           type: 'success',
-          message: expect.stringContaining('Update to 131.0.6778.86 queued'),
+          message: expect.stringContaining('Updating Google Chrome.'),
         })
       );
     });

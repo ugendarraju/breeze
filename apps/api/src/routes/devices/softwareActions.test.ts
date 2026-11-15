@@ -14,15 +14,6 @@ vi.mock('../../db', () => ({
 vi.mock('../../db/schema', () => ({
   deviceCommands: { id: 'id', deviceId: 'deviceId', type: 'type', status: 'status' },
   devices: { id: 'id' },
-  softwareInventory: { deviceId: 'deviceId', name: 'name', installLocation: 'installLocation', uninstallString: 'uninstallString' },
-}));
-
-const dispatchScriptToDeviceMock = vi.fn();
-vi.mock('../../services/scriptDispatch', () => ({
-  dispatchScriptToDevice: (...args: unknown[]) => dispatchScriptToDeviceMock(...args),
-}));
-vi.mock('../../services/scriptDeferredDelivery', () => ({
-  deliverDeferredDispatch: vi.fn(async (d: unknown) => d),
 }));
 
 vi.mock('../../middleware/auth', () => ({
@@ -101,7 +92,6 @@ vi.mock('../../services/commandAudit', () => ({
 
 import { softwareActionsRoutes } from './softwareActions';
 import { getDeviceWithOrgCheck } from './helpers';
-import { db } from '../../db';
 
 describe('device software actions routes', () => {
   let app: Hono;
@@ -520,84 +510,6 @@ describe('device software actions routes', () => {
 
       expect(res.status).toBe(403);
       expect(queueCommandForExecutionMock).not.toHaveBeenCalled();
-    });
-  });
-
-  // fork: "Close app and update"
-  describe('POST /devices/:id/software/close-and-update', () => {
-    const windowsDevice = { id: 'device-1', orgId: 'org-123', siteId: null, hostname: 'host-1', status: 'online', osType: 'windows' };
-    const inventory = (rows: unknown[]) => {
-      const chain: any = { from: () => chain, where: () => chain, limit: () => Promise.resolve(rows) };
-      (db.select as ReturnType<typeof vi.fn>).mockReturnValue(chain);
-    };
-    const post = (body: unknown) =>
-      app.request('/devices/device-1/software/close-and-update', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-
-    beforeEach(() => {
-      dispatchScriptToDeviceMock.mockReset();
-      (getDeviceWithOrgCheck as ReturnType<typeof vi.fn>).mockResolvedValue(windowsDevice);
-    });
-
-    it('dispatches one SYSTEM script that closes the app folder and upgrades the exact id', async () => {
-      resolveWindowsUpdatePackageIdMock.mockResolvedValue({ packageId: 'OBSProject.OBSStudio', via: 'detected_update' });
-      inventory([{ installLocation: null, uninstallString: '"C:\\Program Files\\obs-studio\\uninstall.exe"' }]);
-      dispatchScriptToDeviceMock.mockResolvedValue({ ok: true, commandId: 'cmd-close', executionId: 'exec-1' });
-
-      const res = await post({ name: 'OBS Studio' });
-
-      expect(res.status).toBe(200);
-      expect(await res.json()).toMatchObject({
-        success: true,
-        commandId: 'cmd-close',
-        packageId: 'OBSProject.OBSStudio',
-        appFolder: 'C:\\Program Files\\obs-studio',
-      });
-      const input = dispatchScriptToDeviceMock.mock.calls[0]![0];
-      expect(input).toMatchObject({
-        runAs: 'system',
-        createdBy: 'user-123',
-        offlinePolicy: { kind: 'reject' },
-        deferDelivery: true,
-        source: { kind: 'raw', language: 'powershell', provenance: 'software_close_and_update' },
-      });
-      expect(input.source.content).toContain("$packageId = 'OBSProject.OBSStudio'");
-      expect(input.source.content).toContain("$appDir = 'C:\\Program Files\\obs-studio'");
-      expect(queueCommandForExecutionMock).not.toHaveBeenCalled();
-    });
-
-    it('refuses when the install folder is unknown or too broad', async () => {
-      resolveWindowsUpdatePackageIdMock.mockResolvedValue({ packageId: 'Some.App', via: 'request' });
-      inventory([{ installLocation: 'C:\\Program Files', uninstallString: 'MsiExec.exe /X{1}' }]);
-      const res = await post({ name: 'Some App', packageId: 'Some.App' });
-      expect(res.status).toBe(422);
-      expect((await res.json()).code).toBe('APP_FOLDER_UNKNOWN');
-      expect(dispatchScriptToDeviceMock).not.toHaveBeenCalled();
-    });
-
-    it('refuses when the exact package is unknown', async () => {
-      const res = await post({ name: 'OBS Studio' });
-      expect(res.status).toBe(422);
-      expect((await res.json()).code).toBe('PACKAGE_UNRESOLVED');
-      expect(dispatchScriptToDeviceMock).not.toHaveBeenCalled();
-    });
-
-    it('is Windows-only', async () => {
-      (getDeviceWithOrgCheck as ReturnType<typeof vi.fn>).mockResolvedValue({ ...windowsDevice, osType: 'macos' });
-      const res = await post({ name: 'Firefox' });
-      expect(res.status).toBe(422);
-      expect(dispatchScriptToDeviceMock).not.toHaveBeenCalled();
-    });
-
-    it('reports an offline device as 409 instead of queueing', async () => {
-      resolveWindowsUpdatePackageIdMock.mockResolvedValue({ packageId: 'OBSProject.OBSStudio', via: 'detected_update' });
-      inventory([{ installLocation: 'C:\\Program Files\\obs-studio', uninstallString: null }]);
-      dispatchScriptToDeviceMock.mockResolvedValue({ ok: false, code: 'device_offline', error: 'Device is offline' });
-      const res = await post({ name: 'OBS Studio' });
-      expect(res.status).toBe(409);
     });
   });
 });

@@ -530,6 +530,7 @@ export const MCP_COVERAGE: Readonly<Record<string, McpCoverageEntry>> = {
   'devices/sessions.ts': { tools: ['get_active_users', 'get_user_experience_metrics'] },
   'devices/software.ts': { tools: ['get_device_software'] }, // W12 (#6782)
   'devices/softwareActions.ts': { tools: ['manage_device_software'] }, // W12 (#6782): update / uninstall
+  'devices/softwareUpdateBatch.ts': { exempt: 'internal_plumbing', note: 'fork: the Software tab\'s guarded Windows update flow (detect blocking programs, notify the signed-in user, one script per batch) and its last-run readout. The model updates software through manage_device_software.' },
   'devices/stats.ts': { tools: ['get_fleet_device_stats'] },
   'devices/attentionCounts.ts': { exempt: 'internal_plumbing', note: 'Per-page alert/ticket count batch for the devices list UI (#9038); the same counts reach the model through manage_alerts and the ticket tools.' },
   'devices/tabCounts.ts': { exempt: 'internal_plumbing' },

@@ -40,6 +40,7 @@ import { moveOrgRoutes } from './moveOrg';
 import { actuateElevationRoutes } from './actuateElevation';
 import { pamReconciliationRoutes } from './pamReconciliation';
 import { softwareActionsRoutes } from './softwareActions';
+import { softwareUpdateBatchRoutes } from './softwareUpdateBatch';
 import { homebrewBootstrapRoutes } from './homebrewBootstrap';
 import { agentRecoveryRoutes } from './agentRecovery';
 import { networkRoutes } from './network';
@@ -166,6 +167,8 @@ deviceRoutes.route('/', processSamplesRoutes);
 // the existing GET /:id/software) means there's no actual conflict, but ordering
 // the more-specific paths first matches the existing static-before-:id convention.
 deviceRoutes.route('/', softwareActionsRoutes);
+// fork: guarded Windows updates (detect blockers, notify the user, one script per batch).
+deviceRoutes.route('/', softwareUpdateBatchRoutes);
 deviceRoutes.route('/', softwareRoutes);
 deviceRoutes.route('/', commandsRoutes);
 deviceRoutes.route('/', hardwareRoutes);

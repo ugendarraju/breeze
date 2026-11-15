@@ -2492,13 +2492,27 @@
     "purchaseDateVendorHint": "Obtida da data de envio do fabricante. Informe uma data para substituí-la."
   },
   "deviceSoftwareInventory": {
+    "guarded": {
+      "updating": "Atualizando {{names}}.",
+      "waiting": "Aguardando o usuário fechar {{programs}} para atualizar {{names}}.",
+      "closing": "Fechando {{programs}} e depois atualizando {{names}}.",
+      "queuedOffline": "O dispositivo está offline: as atualizações de {{names}} foram para a fila sem verificar programas abertos.",
+      "queuedPlain": "As atualizações de {{names}} foram para a fila; os programas abertos não foram verificados.",
+      "userNotified": "Um aviso foi enviado para a pessoa no dispositivo.",
+      "lastRun": "Última execução de atualizações ({{when}})",
+      "refresh": "Atualizar",
+      "outcomeUpdated": "Atualizado",
+      "outcomeUpToDate": "Já está atualizado",
+      "outcomeBlocked": "Não atualizado, ainda aberto: {{programs}}",
+      "outcomeFailed": "Falhou (código de saída {{code}})",
+      "outcomeFailedOpen": "Falhou, arquivos em uso por: {{programs}}"
+    },
     "closeUpdate": {
       "action": "Fechar e atualizar",
       "title": "Forçar o fechamento do app e de tudo que usa seus arquivos, depois atualizar",
       "confirmTitle": "Fechar {{name}} e atualizar?",
       "confirmMessage": "O Breeze vai forçar o fechamento de {{name}} e de qualquer outro programa que use seus arquivos neste dispositivo, e depois instalar a atualização. Isso pode incluir apps como Teams, Zoom ou um navegador. O trabalho não salvo nesses programas será perdido.",
-      "confirmHint": "Use somente quando ninguém estiver trabalhando no dispositivo ou depois que o trabalho for salvo.",
-      "queued": "Fechando \"{{name}}\" e atualizando"
+      "confirmHint": "Use somente quando ninguém estiver trabalhando no dispositivo ou depois que o trabalho for salvo."
     },
     "actions": {
       "uninstall": "Desinstalar",

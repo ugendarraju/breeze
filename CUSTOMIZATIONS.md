@@ -109,13 +109,15 @@ Windows `software_update` commands are only sent with an exact winget id (never 
 | `apps/web/src/components/devices/DeviceSoftwareInventory.tsx` (+ `.bulk.test.tsx`) | Sends the bare id; Windows Update disabled with a reason when the id is unknown; bulk summary counts skipped rows |
 | `apps/web/src/locales/*/devices.json` (8 files) | `deviceSoftwareInventory.reasons.noExactPackage`, `deviceSoftwareInventory.bulk.skipped` |
 
-## Software tab: "Close & update" (fork)
+## Software tab: guarded Windows updates, user notice, "Close & update" (fork)
 
-Windows rows with an exact winget id get a "Close & update" button (confirm dialog). It dispatches one server-generated PowerShell script (raw script dispatch, SYSTEM, online devices only) that force-stops every process whose executable or a loaded module is in the app's install folder (never itself/its parents/core Windows processes/explorer), then runs `winget upgrade --exact --id <id> --source winget`. The folder comes from InstallLocation or the uninstaller's folder and is refused when too broad. Needs devices.execute + scripts.execute + MFA.
+Every Windows update from the Software tab (single Update, bulk "Update selected", and "Close & update") is one `POST /devices/:id/software/update-batch` request. The API resolves each package's exact winget id and install folder, runs a short read-only SYSTEM script that lists the programs holding each package's files, sends ONE `notify_user` notice to the signed-in user (needs the Breeze user helper) naming the updates and the programs to close, then dispatches ONE SYSTEM script for the batch: unblocked packages update first, blocked ones wait up to 10 minutes for the user to close the programs ('wait') or have them force-stopped ('force', technician-confirmed "Close & update"), each via `winget upgrade --exact --id <id> --source winget`. Per-package outcomes and blockers are printed as `BREEZE_SOFTWARE_UPDATE {json}` lines and shown on the Software tab via `GET /devices/:id/software/update-runs/latest`. Offline devices, or callers without scripts.execute, fall back to the plain queued `software_update` per package. Scripts respect maintenance windows. Core Windows processes, explorer, and the script's own parents (the agent) are never stopped.
 
 | Path | Change |
 |---|---|
-| `apps/api/src/services/softwareCloseAndUpdate.ts` (+ `.test.ts`) | added: folder derivation/safety checks and the script builder |
-| `apps/api/src/routes/devices/softwareActions.ts` (+ `.test.ts`) | `POST /devices/:id/software/close-and-update` |
-| `apps/web/src/components/devices/DeviceSoftwareInventory.tsx` (+ `.bulk.test.tsx`) | "Close & update" row button + confirm dialog |
-| `apps/web/src/locales/*/devices.json` (8 files) | `deviceSoftwareInventory.closeUpdate.*` |
+| `apps/api/src/services/softwareGuardedUpdate.ts` (+ `.test.ts`) | added: folder derivation/safety checks, detect + update script builders, marker parser, user notice text |
+| `apps/api/src/routes/devices/softwareUpdateBatch.ts` (+ `.test.ts`) | added: `POST /devices/:id/software/update-batch`, `GET /devices/:id/software/update-runs/latest` |
+| `apps/api/src/routes/devices/index.ts` | mounts `softwareUpdateBatchRoutes` |
+| `apps/api/src/services/mcpCoverage.ts` | `devices/softwareUpdateBatch.ts` exempt (internal_plumbing) |
+| `apps/web/src/components/devices/DeviceSoftwareInventory.tsx` (+ `.test.tsx`, `.bulk.test.tsx`) | Windows updates use the batch endpoint; "Close & update" button + confirm dialog; last-update-run panel |
+| `apps/web/src/locales/*/devices.json` (8 files) | `deviceSoftwareInventory.closeUpdate.*`, `deviceSoftwareInventory.guarded.*` |
