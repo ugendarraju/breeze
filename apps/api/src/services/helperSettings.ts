@@ -28,6 +28,7 @@ import {
   type BrandingCandidate,
   type BrandingDecision,
 } from './helperBranding';
+import { withDeviceHelpPortal } from './deviceHelp/helperPortalOverlay'; // fork
 
 const LEVEL_PRIORITY: Record<string, number> = {
   device: 5,
@@ -275,7 +276,8 @@ export interface HelperConfigUpdateOptions extends DevicePolicySetOpts {
  * error.
  */
 export async function readCachedHelperSettings(deviceId: string, orgId: string): Promise<HelperSettings | null> {
-  return readDevicePolicyCache<HelperSettings>('helper', deviceId, orgId);
+  const cached = await readDevicePolicyCache<HelperSettings>('helper', deviceId, orgId);
+  return cached ? withDeviceHelpPortal(deviceId, cached) : null; // fork: tray opens Get help
 }
 
 export async function buildHelperConfigUpdate(
@@ -291,7 +293,7 @@ export async function buildHelperConfigUpdate(
   const cacheOrgId = devicePolicyCacheOrg(deviceId, { ...opts, orgId });
   if (!opts?.skipCacheRead) {
     const cached = await readDevicePolicyCache<HelperSettings>('helper', deviceId, cacheOrgId);
-    if (cached) return cached;
+    if (cached) return withDeviceHelpPortal(deviceId, cached); // fork: tray opens Get help
   }
 
   // Try config policy resolution first
@@ -316,5 +318,5 @@ export async function buildHelperConfigUpdate(
     await writeDevicePolicyCache('helper', deviceId, cacheOrgId, settings, HELPER_CACHE_TTL_SECONDS);
   }
 
-  return settings;
+  return withDeviceHelpPortal(deviceId, settings); // fork: tray opens Get help
 }
