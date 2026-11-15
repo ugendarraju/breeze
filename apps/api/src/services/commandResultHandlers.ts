@@ -75,6 +75,7 @@ import { handleInstallPatchesResult } from './patchJobFinalizer';
 // this one leaf handler; it decides nothing itself (W01 applyDecision does).
 import { handleCallerVerifyResult } from './callerVerification/workstationResult';
 import { handleNotifyUserResult, handleRetractMessageResult } from './endpointMessaging/commandResults';
+import { isFinishedSoftwareUpdate, scheduleInventoryRefreshAfterUpdate } from './softwareUpdateInventoryRefresh';
 import { handleChatMessageResult, handleChatOpenResult } from './endpointMessaging/chatResults';
 // #9662: AI/incident containment actions follow their command's real outcome.
 import { handleExecuteContainmentResult } from './incidentContainmentResults';
@@ -1298,6 +1299,22 @@ async function handleOemUpdateReleaseResult({ commandId, resolvedDeviceId, stdou
   await applyOemUpdateRelease({ commandId, deviceId: resolvedDeviceId, result });
 }
 
+/**
+ * fork: after a guarded software update script finishes, refresh the device's
+ * inventory (once per run). The script handler's own persistence runs first.
+ */
+async function handleScriptResultThenRefreshAfterUpdate(params: Parameters<CommandResultHandler>[0]): Promise<void> {
+  await handleScriptResult(params);
+  if (isFinishedSoftwareUpdate(params.command, params.result.status)) {
+    scheduleInventoryRefreshAfterUpdate(params.resolvedDeviceId);
+  }
+}
+
+/** fork: a plain software_update that succeeded refreshes the device's inventory. */
+async function handleSoftwareUpdateResult({ command, result, resolvedDeviceId }: Parameters<CommandResultHandler>[0]): Promise<void> {
+  if (isFinishedSoftwareUpdate(command, result.status)) scheduleInventoryRefreshAfterUpdate(resolvedDeviceId);
+}
+
 export const commandResultHandlers: Record<string, CommandResultHandler> = {
   [CommandTypes.OEM_UPDATE_RUN]: handleOemUpdateRunResult,
   [CommandTypes.OEM_UPDATE_RELEASE]: handleOemUpdateReleaseResult,
@@ -1319,7 +1336,9 @@ export const commandResultHandlers: Record<string, CommandResultHandler> = {
   // #8385: a configuration the helper could not apply shows on the vault.
   vault_configure: handleVaultConfigureResult,
   snmp_poll: handleSnmpPollResult,
-  script: handleScriptResult,
+  script: handleScriptResultThenRefreshAfterUpdate,
+  // fork: a finished software update asks the agent for a fresh software list.
+  [CommandTypes.SOFTWARE_UPDATE]: handleSoftwareUpdateResult,
   script_cancel: handleScriptCancelResult,
   sensitive_data_scan: handleSensitiveDataResult,
   encrypt_file: handleSensitiveDataResult,

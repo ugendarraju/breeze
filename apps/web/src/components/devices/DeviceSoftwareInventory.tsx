@@ -20,7 +20,6 @@ import { useTranslation } from 'react-i18next';
 import { fetchWithAuth } from '../../stores/auth';
 import { runAction, ActionError } from '../../lib/runAction';
 import { showToast } from '../shared/Toast';
-import { sendDeviceCommand } from '../../services/deviceActions';
 
 // Mirrors the API's softwareActions packageId regex. Used to decide whether a
 // correlated update's packageId can be sent to the winget-only `--id` path.
@@ -278,7 +277,7 @@ export default function DeviceSoftwareInventory({ deviceId, timezone, osType }: 
 
   // fork: live update status. Best effort: rows just show no status on failure.
   const previousStates = useRef<Record<string, UpdateState>>({});
-  const lastInventoryRefresh = useRef(0);
+  const lastInventoryRefetch = useRef(0);
   const fetchUpdateStatus = useCallback(async () => {
     try {
       const response = await fetchWithAuth(`/devices/${deviceId}/software/update-status`);
@@ -287,22 +286,17 @@ export default function DeviceSoftwareInventory({ deviceId, timezone, osType }: 
       const list: PackageStatus[] = Array.isArray(json?.packages) ? json.packages : [];
       const next: Record<string, PackageStatus> = {};
       for (const s of list) next[s.packageId.toLowerCase()] = s;
-      // An update that just finished successfully: ask the agent for a fresh
-      // software list so the row shows the new version without waiting for
-      // the next scheduled scan.
+      // An update that just finished: the API has asked the agent for a fresh
+      // software list, so re-read the list once that has had time to arrive
+      // and the row shows the new version.
       const justFinished = list.some((s) => {
         const before = previousStates.current[s.packageId.toLowerCase()];
-        return before !== undefined && IN_PROGRESS.has(before) && (s.state === 'succeeded' || s.state === 'up_to_date');
+        return before !== undefined && IN_PROGRESS.has(before) && !IN_PROGRESS.has(s.state);
       });
       previousStates.current = Object.fromEntries(list.map((s) => [s.packageId.toLowerCase(), s.state]));
       setUpdateStatus(next);
-      if (justFinished && Date.now() - lastInventoryRefresh.current > INVENTORY_REFETCH_MS) {
-        lastInventoryRefresh.current = Date.now();
-        try {
-          await sendDeviceCommand(deviceId, 'refresh_inventory');
-        } catch {
-          // The scheduled scan picks it up later anyway.
-        }
+      if (justFinished && Date.now() - lastInventoryRefetch.current > INVENTORY_REFETCH_MS) {
+        lastInventoryRefetch.current = Date.now();
         setTimeout(() => void fetchSoftware(true), INVENTORY_REFETCH_MS);
       }
     } catch {

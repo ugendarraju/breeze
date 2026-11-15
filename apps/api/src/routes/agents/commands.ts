@@ -105,6 +105,8 @@ const REGISTRY_DISPATCHED_COMMAND_TYPES = new Set([
   'mssql_backup',
   'snmp_poll',
   'script',
+  // fork: a finished software_update queues an inventory refresh (registry-only).
+  'software_update',
   // #3525: the agent's script_cancel ack is the ONLY evidence that lets an
   // execution terminalise as `cancelled`. Omitting it here drops that evidence
   // on the HTTP-polling transport specifically, leaving the row stuck in

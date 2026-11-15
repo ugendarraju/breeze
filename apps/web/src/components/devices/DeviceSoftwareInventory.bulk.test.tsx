@@ -226,11 +226,11 @@ describe('DeviceSoftwareInventory bulk updates (fork)', () => {
       state = 'succeeded';
       await vi.advanceTimersByTimeAsync(5_000);
       await waitFor(() => expect(screen.getByTestId('software-update-status-Cloudflare.Warp').textContent).toBe('Updated'));
-      // A finished update asks the agent for a fresh software list.
-      await waitFor(() =>
-        expect(fetchMock.mock.calls.some(([u, init]) =>
-          String(u).includes('/commands') && String((init as RequestInit | undefined)?.body ?? '').includes('refresh_inventory'))).toBe(true),
-      );
+      // Once the API-triggered inventory refresh has had time to land, the list is re-read.
+      const listReads = () => fetchMock.mock.calls.filter(([u]) => String(u).includes('/software?limit=')).length;
+      const before = listReads();
+      await vi.advanceTimersByTimeAsync(90_000);
+      await waitFor(() => expect(listReads()).toBeGreaterThan(before));
     } finally {
       vi.useRealTimers();
     }
