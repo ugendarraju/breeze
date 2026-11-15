@@ -7,6 +7,7 @@ const h = vi.hoisted(() => ({
   putBytes: vi.fn(),
   deleteBytes: vi.fn(),
   lock: vi.fn(),
+  assignHelpTicket: vi.fn(),
 }));
 
 vi.mock('../../db', () => {
@@ -36,6 +37,7 @@ vi.mock('../ticketService', () => {
   }
   return { createTicket: h.createTicket, TicketServiceError };
 });
+vi.mock('./helpTicketAssignee', () => ({ assignHelpTicket: h.assignHelpTicket })); // fork
 vi.mock('../ticketRowLock', () => ({ lockTicketForWrite: h.lock }));
 vi.mock('../ticketMerge/errors', () => ({ assertTicketNotMerged: vi.fn() }));
 vi.mock('../ticketAttachmentStorage', () => ({ putBytes: h.putBytes, deleteBytes: h.deleteBytes }));
@@ -49,7 +51,7 @@ const INPUT = {
   details: 'Outlook crashes\nwhen I open attachments',
 };
 const LIVE_ROW = {
-  orgId: 'org-1', hostname: 'ASUS-ROG', displayName: 'Asha laptop', status: 'online', orgStatus: 'active', partnerStatus: 'active',
+  orgId: 'org-1', partnerId: 'partner-1', hostname: 'ASUS-ROG', displayName: 'Asha laptop', status: 'online', orgStatus: 'active', partnerStatus: 'active',
 };
 const SHOT = { bytes: Buffer.from('png-bytes'), contentType: 'image/png' as const, filename: '../../error.png' };
 
@@ -85,6 +87,8 @@ describe('createHelpTicket', () => {
       orgId: 'org-1', deviceId: DEVICE, source: 'api', submitterName: 'Asha Rao', submitterEmail: 'asha@example.com',
     });
     expect(actor).toMatchObject({ kind: 'system', name: 'Get help form' });
+    // fork: handed to the device's own technician (partner of the device org).
+    expect(h.assignHelpTicket).toHaveBeenCalledWith(expect.objectContaining({ id: 'ticket-1' }), 'partner-1', actor);
     expect(h.putBytes).not.toHaveBeenCalled();
     expect(h.inserts).toHaveLength(0);
   });

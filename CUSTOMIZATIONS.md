@@ -122,7 +122,9 @@ The person at a managed computer opens a per-device link (`/help#<token>`, usual
 | `apps/api/src/services/deviceHelp/helpTicket.ts` (+ `.test.ts`) | added | Form -> ticket + screenshot attachment |
 | `apps/api/src/services/deviceHelp/helpShortcutScripts.ts` (+ `.test.ts`) | added | "Get Help Desktop Shortcut (Windows / macOS / Linux)" system scripts (`help_url`, `action`) |
 | `apps/api/src/services/deviceHelp/helperPortalOverlay.ts` (+ `.test.ts`) | added | Breeze Assist tray "Open Breeze Portal" opens the device Get help form (per-device `portalUrl`) |
-| `apps/api/src/services/helperSettings.ts` | modified | Helper settings leave through `withDeviceHelpPortal` (3 return sites) |
+| `apps/api/src/services/helperSettings.ts` | modified | Helper settings leave through `withDeviceHelpPortal` (3 return sites); Breeze Assist defaults ON with no Request Support when no policy/org setting decides (`getOrgHelperSettings` unset -> true) |
+| `apps/api/src/services/deviceHelp/helpTicketAssignee.ts` (+ `.test.ts`) | added | Get help ticket -> routing rule, else partner default assignee, else oldest active partner staff |
+| `apps/api/src/__tests__/integration/agentPolicyResolversPartnerWide.integration.test.ts` | modified | No-policy helper path now expects `enabled: true` (fork default) |
 | `apps/api/src/routes/deviceHelpPublic.ts` (+ `.test.ts`) | added | Public check/submit |
 | `apps/api/src/routes/deviceHelp.ts` (+ `.test.ts`) | added | Technician GET / rotate / disable (`devices.read` / `devices.write`, org + site access, audited) |
 | `apps/web/src/pages/help.astro` | added | Public page |

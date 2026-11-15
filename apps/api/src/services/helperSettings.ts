@@ -50,7 +50,10 @@ export async function getOrgHelperSettings(orgId: string): Promise<{ enabled: bo
     .limit(1);
   const settings = isObject(org?.settings) ? org.settings : {};
   const helper = isObject(settings.helper) ? settings.helper : {};
-  const enabled = typeof helper.enabled === 'boolean' ? helper.enabled : false;
+  // fork: Breeze Assist (the tray with the Get help item) is on wherever no
+  // policy and no explicit org setting says otherwise, so every technician's
+  // devices get it without setting up a policy. Upstream defaults to off.
+  const enabled = typeof helper.enabled === 'boolean' ? helper.enabled : true;
   return { enabled };
 }
 
@@ -311,7 +314,8 @@ export async function buildHelperConfigUpdate(
   if (settings === null) {
     const loadOrg = opts?.loadOrgHelperSettings ?? getOrgHelperSettings;
     const orgEnabled = (await loadOrg(orgId)).enabled;
-    settings = { ...HELPER_DEFAULTS, enabled: orgEnabled };
+    // fork: no Request Support by default - it opens the AI chat, not the Get help form.
+    settings = { ...HELPER_DEFAULTS, enabled: orgEnabled, showRequestSupport: false };
   }
 
   if (!opts?.skipCacheWrite) {

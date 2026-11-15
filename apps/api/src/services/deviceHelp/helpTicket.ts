@@ -16,6 +16,7 @@ import { devices, organizations, partners } from '../../db/schema';
 import { ticketComments } from '../../db/schema/portal';
 import { ticketAttachments } from '../../db/schema/ticketAttachments';
 import { createTicket, TicketServiceError, type TicketActor } from '../ticketService';
+import { assignHelpTicket } from './helpTicketAssignee';
 import { lockTicketForWrite } from '../ticketRowLock';
 import { assertTicketNotMerged } from '../ticketMerge/errors';
 import { deleteBytes, putBytes, type AttachmentBackend } from '../ticketAttachmentStorage';
@@ -148,6 +149,7 @@ export async function createHelpTicket(
       const [row] = await db
         .select({
           orgId: devices.orgId,
+          partnerId: organizations.partnerId,
           hostname: devices.hostname,
           displayName: devices.displayName,
           status: devices.status,
@@ -186,6 +188,9 @@ export async function createHelpTicket(
         }
         throw err;
       }
+
+      // Unless a routing rule already did, hand the ticket to this device's technician.
+      await assignHelpTicket(ticket, row.partnerId, HELP_FORM_ACTOR);
 
       if (stored && shot) {
         await attachHelpScreenshot({ ticketId: ticket.id, orgId: row.orgId, authorName: input.name, stored, shot });
