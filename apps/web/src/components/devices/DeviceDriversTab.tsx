@@ -52,6 +52,7 @@ export type DriversResponse = {
     scannedAt: string | null;
     manufacturer: string | null;
     model: string | null;
+    makerApps?: string[];
     drivers: InstalledDriver[];
     windowsUpdate: { ok: boolean; source: string | null; error: string | null; updates: WuDriver[] };
     oem: { vendor: Vendor; tool: string | null; ok: boolean; listSupported: boolean; error: string | null; updates: OemUpdate[] } | null;
@@ -74,6 +75,7 @@ export type DriversResponse = {
 const ACTIVE = new Set<RunStatus>(['pending', 'queued', 'running', 'cancelling']);
 const isActive = (run: Run | null | undefined) => !!run && ACTIVE.has(run.status);
 const MICROSOFT = /^microsoft/i;
+const ASUS = /^asus/i;
 const NO_UPDATES: WuDriver[] = [];
 
 type Pending =
@@ -455,6 +457,12 @@ export default function DeviceDriversTab({ deviceId, timezone }: { deviceId: str
                 {t('devices:deviceDrivers.installTool', { tool: data.suggestedTool.tool })}
               </button>
             </>
+          ) : ASUS.test(result.manufacturer ?? '') ? (
+            <p className="text-sm text-muted-foreground" data-testid="drivers-asus-note">
+              {result.makerApps?.length
+                ? t('devices:deviceDrivers.asusAppInstalled', { apps: result.makerApps.join(', ') })
+                : t('devices:deviceDrivers.asusNoApp')}
+            </p>
           ) : (
             <p className="text-sm text-muted-foreground">{t('devices:deviceDrivers.noOemTool')}</p>
           )}

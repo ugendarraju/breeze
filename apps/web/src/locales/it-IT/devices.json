@@ -2696,6 +2696,8 @@
     "toolInstalling": "Installing the maker's tool…",
     "toolInstallLast": "Last tool install",
     "noOemTool": "This maker has no command-line update tool Breeze can use. Windows Update covers its drivers.",
+    "asusAppInstalled": "{{apps}} is installed, but it can't be run remotely. ASUS drivers come through Windows Update above; for BIOS and ASUS app updates, open MyASUS > System Update on the PC.",
+    "asusNoApp": "ASUS drivers come through Windows Update above. For BIOS and ASUS app updates, use MyASUS > System Update on the PC.",
     "installedTitle": "Installed drivers ({{count}})",
     "showInbox": "Show Microsoft drivers",
     "search": "Search drivers",

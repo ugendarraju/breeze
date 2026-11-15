@@ -111,6 +111,16 @@ try {
   $out.model = Limit-Text $cs.Model 100
 } catch {}
 
+# Maker apps that have no command line Breeze can drive (shown as a hint only).
+$makerApps = @()
+$appsDir = Join-Path $env:ProgramFiles 'WindowsApps'
+foreach ($a in @(@{ name = 'MyASUS'; pattern = 'B9ECED6F.ASUSPCAssistant_*' }, @{ name = 'Armoury Crate'; pattern = 'B9ECED6F.ArmouryCrate_*' })) {
+  try {
+    if (Get-ChildItem -LiteralPath $appsDir -Filter $a.pattern -Directory -ErrorAction Stop | Select-Object -First 1) { $makerApps += $a.name }
+  } catch {}
+}
+$out.makerApps = @($makerApps)
+
 # 1. Installed drivers, plus every hardware/compatible ID per device for matching.
 $idsByDevice = @{}
 try {
@@ -582,6 +592,8 @@ export type DriverScanResult = {
   scannedAt: string | null;
   manufacturer: string | null;
   model: string | null;
+  /** Maker apps found that Breeze cannot drive (e.g. MyASUS). */
+  makerApps: string[];
   drivers: InstalledDriver[];
   windowsUpdate: { ok: boolean; source: string | null; error: string | null; updates: WindowsUpdateDriver[] };
   oem: {
@@ -672,6 +684,7 @@ export function parseDriverScanOutput(stdout: string | null | undefined): Driver
     scannedAt: str(doc.scannedAt, 40),
     manufacturer: str(doc.manufacturer, 100),
     model: str(doc.model, 100),
+    makerApps: (typeof doc.makerApps === 'string' ? [doc.makerApps] : arr(doc.makerApps)).map((x) => str(x, 40)).filter((x): x is string => !!x).slice(0, 5),
     drivers,
     windowsUpdate: { ok: wu.ok === true, source: str(wu.source, 60), error: str(wu.error, 500), updates },
     oem,

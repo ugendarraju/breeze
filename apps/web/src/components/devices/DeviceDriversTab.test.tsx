@@ -51,7 +51,23 @@ describe('DeviceDriversTab', () => {
     expect(await screen.findByText('Realtek - MEDIA - 6.0.10')).toBeTruthy();
     expect(screen.getByText('Realtek Audio')).toBeTruthy();
     expect(screen.queryByText('WAN Miniport')).toBeNull();
-    expect(screen.getByText(/no command-line update tool/i)).toBeTruthy();
+    expect(screen.getByTestId('drivers-asus-note').textContent).toMatch(/use MyASUS/);
+  });
+
+  it('says MyASUS cannot be run remotely when the scan found it', async () => {
+    const data = base();
+    data.result!.makerApps = ['MyASUS'];
+    fetchMock.mockResolvedValue(json(data));
+    render(<DeviceDriversTab deviceId="dev-1" />);
+    expect((await screen.findByTestId('drivers-asus-note')).textContent).toMatch(/MyASUS is installed, but it can't be run remotely/);
+  });
+
+  it('keeps the generic note for makers with no tool', async () => {
+    const data = base();
+    data.result!.manufacturer = 'Micro-Star International Co., Ltd.';
+    fetchMock.mockResolvedValue(json(data));
+    render(<DeviceDriversTab deviceId="dev-1" />);
+    expect(await screen.findByText(/no command-line update tool/i)).toBeTruthy();
   });
 
   it('installs the selected updates only after confirming', async () => {
