@@ -605,7 +605,7 @@ export default function DeviceSoftwareInventory({ deviceId, timezone, osType }: 
         <p className="text-sm text-destructive">{error}</p>
         <button
           type="button"
-          onClick={fetchSoftware}
+          onClick={() => void fetchSoftware()}
           className="mt-4 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
         >
           {t('common:actions.retry')}
@@ -628,7 +628,7 @@ export default function DeviceSoftwareInventory({ deviceId, timezone, osType }: 
         </div>
         <button
           type="button"
-          onClick={fetchSoftware}
+          onClick={() => void fetchSoftware()}
           className="flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm text-muted-foreground hover:bg-muted hover:text-foreground"
         >
           <RefreshCw className="h-3.5 w-3.5" />
