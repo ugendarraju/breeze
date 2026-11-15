@@ -2494,6 +2494,28 @@
     "purchaseDateVendorHint": "Ricavata dalla data di spedizione del produttore. Inserisci una data per sovrascriverla."
   },
   "deviceSoftwareInventory": {
+    "guarded": {
+      "updating": "Aggiornamento di {{names}}.",
+      "waiting": "In attesa che l’utente chiuda {{programs}} per aggiornare {{names}}.",
+      "closing": "Chiusura di {{programs}}, poi aggiornamento di {{names}}.",
+      "queuedOffline": "Il dispositivo è offline: gli aggiornamenti di {{names}} sono in coda senza controllare i programmi aperti.",
+      "queuedPlain": "Gli aggiornamenti di {{names}} sono in coda; i programmi aperti non sono stati controllati.",
+      "userNotified": "È stato inviato un avviso alla persona sul dispositivo.",
+      "lastRun": "Ultima esecuzione degli aggiornamenti ({{when}})",
+      "refresh": "Aggiorna",
+      "outcomeUpdated": "Aggiornato",
+      "outcomeUpToDate": "Già aggiornato",
+      "outcomeBlocked": "Non aggiornato, ancora aperto: {{programs}}",
+      "outcomeFailed": "Non riuscito (codice di uscita {{code}})",
+      "outcomeFailedOpen": "Non riuscito, file in uso da: {{programs}}"
+    },
+    "closeUpdate": {
+      "action": "Chiudi e aggiorna",
+      "title": "Chiudi forzatamente l’app e tutto ciò che usa i suoi file, poi aggiorna",
+      "confirmTitle": "Chiudere {{name}} e aggiornare?",
+      "confirmMessage": "Breeze chiuderà forzatamente {{name}} e qualsiasi altro programma che usa i suoi file su questo dispositivo, poi installerà l’aggiornamento. Possono essere incluse app come Teams, Zoom o un browser. Il lavoro non salvato in quei programmi andrà perso.",
+      "confirmHint": "Usalo solo quando nessuno sta lavorando sul dispositivo o dopo che il lavoro è stato salvato."
+    },
     "actions": {
       "uninstall": "Disinstalla",
       "update": "Aggiorna"

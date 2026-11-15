@@ -2494,6 +2494,28 @@
     "purchaseDateVendorHint": "Set from the manufacturer’s ship date. Enter a date to override it."
   },
   "deviceSoftwareInventory": {
+    "guarded": {
+      "updating": "Updating {{names}}.",
+      "waiting": "Waiting for the user to close {{programs}} so {{names}} can update.",
+      "closing": "Closing {{programs}}, then updating {{names}}.",
+      "queuedOffline": "The device is offline: updates for {{names}} are queued without checking for open programs.",
+      "queuedPlain": "Updates for {{names}} are queued; open programs were not checked.",
+      "userNotified": "A notice was sent to the person at the device.",
+      "lastRun": "Last update run ({{when}})",
+      "refresh": "Refresh",
+      "outcomeUpdated": "Updated",
+      "outcomeUpToDate": "Already up to date",
+      "outcomeBlocked": "Not updated, still open: {{programs}}",
+      "outcomeFailed": "Failed (exit code {{code}})",
+      "outcomeFailedOpen": "Failed, files in use by: {{programs}}"
+    },
+    "closeUpdate": {
+      "action": "Close & update",
+      "title": "Force-close the app and anything using its files, then update",
+      "confirmTitle": "Close {{name}} and update?",
+      "confirmMessage": "Breeze will force-close {{name}} and any other program using its files on this device, then install the update. That can include apps like Teams, Zoom or a browser. Unsaved work in those programs will be lost.",
+      "confirmHint": "Use this only when nobody is working on the device, or after they have saved their work."
+    },
     "actions": {
       "uninstall": "Uninstall",
       "update": "Update"

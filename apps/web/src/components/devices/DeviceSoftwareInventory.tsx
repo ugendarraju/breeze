@@ -10,7 +10,8 @@ import {
   ArrowUpCircle,
   Trash2,
   Loader2,
-  AlertTriangle
+  AlertTriangle,
+  Power
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { fetchWithAuth } from '../../stores/auth';
@@ -70,6 +71,31 @@ type DeviceSoftwareInventoryProps = {
 };
 
 type SoftwareAction = 'update' | 'uninstall';
+// fork: what a row's spinner shows; 'closeUpdate' = force-close blockers, then update (Windows).
+type PendingAction = SoftwareAction | 'closeUpdate';
+
+// fork: POST /devices/:id/software/update-batch (Windows) — one detect + notice + update run.
+type BatchResponse = {
+  delivery: 'script' | 'queued';
+  reason?: 'offline' | 'no_script_permission';
+  packages: Array<{ name: string; packageId: string; programs: string[] }>;
+  skipped: Array<{ name: string }>;
+  notified: boolean;
+};
+// fork: GET /devices/:id/software/update-runs/latest
+type UpdateRun = {
+  commandId: string;
+  status: string;
+  createdAt: string;
+  completedAt: string | null;
+  packages: Array<{
+    packageId: string;
+    name: string;
+    outcome: 'updated' | 'up_to_date' | 'blocked' | 'failed';
+    exitCode: number | null;
+    programs: string[];
+  }>;
+};
 
 // We block update/uninstall for Apple-published macOS apps because their
 // package-manager identity (Apple-signed App Store / OS components) is not
@@ -158,11 +184,15 @@ export default function DeviceSoftwareInventory({ deviceId, timezone, osType }: 
   // Rows currently in-flight (keyed by row id) so the table can show a
   // per-row spinner and disable other actions on that row without disabling
   // the entire grid.
-  const [pendingActions, setPendingActions] = useState<Record<string, SoftwareAction | undefined>>({});
+  const [pendingActions, setPendingActions] = useState<Record<string, PendingAction | undefined>>({});
+  // fork: the last guarded Windows update run (blockers/outcomes for the technician).
+  const [lastRun, setLastRun] = useState<UpdateRun | null>(null);
   // null when no confirm dialog is open. Only Uninstall opens one — Update
   // queues directly, since the worst case is a silent no-op when the package
   // is already current.
   const [confirmState, setConfirmState] = useState<ConfirmState | null>(null);
+  // fork: confirm dialog for "Close & update".
+  const [closeConfirm, setCloseConfirm] = useState<{ rowId: string; name: string; packageId: string | null } | null>(null);
   // fork: "Updates only" filter + bulk update
   const [updatesOnly, setUpdatesOnly] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -206,6 +236,84 @@ export default function DeviceSoftwareInventory({ deviceId, timezone, osType }: 
   useEffect(() => {
     fetchSoftware();
   }, [fetchSoftware]);
+
+  const isWindowsDevice = osType?.toLowerCase() === 'windows';
+
+  // fork: last guarded update run. Best effort: the panel just stays hidden on failure.
+  const fetchLastRun = useCallback(async () => {
+    try {
+      const response = await fetchWithAuth(`/devices/${deviceId}/software/update-runs/latest`);
+      if (!response.ok) return;
+      const json = await response.json();
+      setLastRun(json?.run ?? null);
+    } catch {
+      // ignore
+    }
+  }, [deviceId]);
+
+  useEffect(() => {
+    if (isWindowsDevice) void fetchLastRun();
+  }, [isWindowsDevice, fetchLastRun]);
+
+  // fork: Windows updates (single, bulk, Close & update) go through one batch
+  // request: the API finds the programs holding each package's files, notifies
+  // the signed-in user once, and runs one update script for the whole batch.
+  const queueWindowsUpdates = useCallback(
+    async (
+      targets: Array<{ id: string; name: string; updatePackageId: string | null }>,
+      mode: 'wait' | 'force',
+      // Rows the bulk selection left out because their exact package is unknown.
+      alreadySkipped = 0
+    ): Promise<BatchResponse | null> => {
+      const pendingKind: PendingAction = mode === 'force' ? 'closeUpdate' : 'update';
+      setPendingActions((prev) => ({ ...prev, ...Object.fromEntries(targets.map((r) => [r.id, pendingKind])) }));
+      const items = targets.map((r) => {
+        const packageId = wingetIdFor(r.updatePackageId);
+        return packageId ? { name: r.name, packageId } : { name: r.name };
+      });
+      const verb = t('deviceSoftwareInventory.actions.update');
+      try {
+        return await runAction<BatchResponse>({
+          request: () =>
+            fetchWithAuth(`/devices/${deviceId}/software/update-batch`, {
+              method: 'POST',
+              body: JSON.stringify({ items, mode }),
+            }),
+          errorFallback: t('deviceSoftwareInventory.toasts.couldNotQueue', { action: verb }),
+          successMessage: (data) => {
+            const names = data.packages.map((p) => p.name).join(', ');
+            const programs = [...new Set(data.packages.flatMap((p) => p.programs))].join(', ');
+            const parts: string[] = [];
+            if (data.delivery === 'queued') {
+              parts.push(t(data.reason === 'offline' ? 'deviceSoftwareInventory.guarded.queuedOffline' : 'deviceSoftwareInventory.guarded.queuedPlain', { names }));
+            } else if (programs) {
+              parts.push(t(mode === 'force' ? 'deviceSoftwareInventory.guarded.closing' : 'deviceSoftwareInventory.guarded.waiting', { programs, names }));
+            } else {
+              parts.push(t('deviceSoftwareInventory.guarded.updating', { names }));
+            }
+            if (data.notified) parts.push(t('deviceSoftwareInventory.guarded.userNotified'));
+            const skippedCount = data.skipped.length + alreadySkipped;
+            if (skippedCount > 0) parts.push(t('deviceSoftwareInventory.bulk.skipped', { count: skippedCount }));
+            return parts.join(' ');
+          },
+        });
+      } catch (err) {
+        if (err instanceof ActionError && err.status === 401) return null;
+        if (!(err instanceof ActionError)) {
+          showToast({ message: t('deviceSoftwareInventory.toasts.couldNotQueue', { action: verb }), type: 'error' });
+        }
+        return null;
+      } finally {
+        setPendingActions((prev) => {
+          const next = { ...prev };
+          for (const r of targets) delete next[r.id];
+          return next;
+        });
+        void fetchLastRun();
+      }
+    },
+    [deviceId, fetchLastRun, t]
+  );
 
   const queueSoftwareAction = useCallback(
     async (
@@ -362,6 +470,13 @@ export default function DeviceSoftwareInventory({ deviceId, timezone, osType }: 
     const targets = selectedUpdatable;
     if (targets.length === 0 || bulkRunning) return;
     setBulkRunning(true);
+    // fork: Windows sends the whole selection as ONE batch (one notice, one script).
+    if (isWindowsDevice) {
+      await queueWindowsUpdates(targets, 'wait', skippedNoPackageCount);
+      setBulkRunning(false);
+      setSelected(new Set());
+      return;
+    }
     let queued = 0;
     // One at a time: each queues a command on the device; firing 18 at once
     // would flood the agent's command queue and the API rate limits.
@@ -398,6 +513,7 @@ export default function DeviceSoftwareInventory({ deviceId, timezone, osType }: 
   };
 
   const isMac = osType?.toLowerCase() === 'macos' || osType?.toLowerCase() === 'darwin';
+
   const hasActiveFilters = search || publisherFilter !== 'all' || typeFilter !== 'all' || updatesOnly;
   const updatesAvailableCount = useMemo(
     () => rows.filter((r) => r.updateAvailable).length,
@@ -581,6 +697,43 @@ export default function DeviceSoftwareInventory({ deviceId, timezone, osType }: 
         </div>
       )}
 
+      {/* fork: last guarded update run — what updated and which programs blocked the rest */}
+      {isWindowsDevice && lastRun && lastRun.packages.length > 0 && (
+        <div data-testid="software-last-update-run" className="mt-4 rounded-md border px-4 py-3 text-sm">
+          <div className="flex items-center justify-between gap-2">
+            <span className="font-medium">
+              {t('deviceSoftwareInventory.guarded.lastRun', { when: formatDate(lastRun.createdAt, effectiveTimezone) })}
+            </span>
+            <button
+              type="button"
+              onClick={() => void fetchLastRun()}
+              className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+              {t('deviceSoftwareInventory.guarded.refresh')}
+            </button>
+          </div>
+          <ul className="mt-2 space-y-1">
+            {lastRun.packages.map((p) => (
+              <li key={p.packageId} className="flex flex-wrap gap-x-2">
+                <span className="font-medium">{p.name}</span>
+                <span className={p.outcome === 'blocked' || p.outcome === 'failed' ? 'text-destructive' : 'text-muted-foreground'}>
+                  {p.outcome === 'blocked'
+                    ? t('deviceSoftwareInventory.guarded.outcomeBlocked', { programs: p.programs.join(', ') })
+                    : p.outcome === 'failed'
+                      ? p.programs.length > 0
+                        ? t('deviceSoftwareInventory.guarded.outcomeFailedOpen', { programs: p.programs.join(', ') })
+                        : t('deviceSoftwareInventory.guarded.outcomeFailed', { code: p.exitCode ?? '?' })
+                      : p.outcome === 'up_to_date'
+                        ? t('deviceSoftwareInventory.guarded.outcomeUpToDate')
+                        : t('deviceSoftwareInventory.guarded.outcomeUpdated')}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {/* Table */}
       <div className="mt-4 overflow-hidden rounded-md border">
         <div className="max-h-[500px] overflow-auto">
@@ -665,10 +818,12 @@ export default function DeviceSoftwareInventory({ deviceId, timezone, osType }: 
                             disabled={!item.capabilities.update.allowed || anyPending}
                             title={item.capabilities.update.reason ?? t('deviceSoftwareInventory.updateTitle')}
                             onClick={() =>
-                              queueSoftwareAction(item.id, 'update', item.name, item.rawVersion, {
-                                packageId: item.updatePackageId,
-                                availableVersion: item.availableVersion,
-                              })
+                              isWindowsDevice
+                                ? void queueWindowsUpdates([item], 'wait')
+                                : queueSoftwareAction(item.id, 'update', item.name, item.rawVersion, {
+                                    packageId: item.updatePackageId,
+                                    availableVersion: item.availableVersion,
+                                  })
                             }
                             className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
                           >
@@ -679,6 +834,25 @@ export default function DeviceSoftwareInventory({ deviceId, timezone, osType }: 
                             )}
                             {t('deviceSoftwareInventory.actions.update')}
                           </button>
+                          {isWindowsDevice && item.capabilities.update.allowed && (
+                            <button
+                              type="button"
+                              data-testid={`software-close-update-${item.id}`}
+                              disabled={anyPending}
+                              title={t('deviceSoftwareInventory.closeUpdate.title')}
+                              onClick={() =>
+                                setCloseConfirm({ rowId: item.id, name: item.name, packageId: item.updatePackageId })
+                              }
+                              className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {pendingActions[item.id] === 'closeUpdate' ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <Power className="h-3.5 w-3.5" />
+                              )}
+                              {t('deviceSoftwareInventory.closeUpdate.action')}
+                            </button>
+                          )}
                           <button
                             type="button"
                             data-testid={`software-uninstall-${item.id}`}
@@ -807,6 +981,57 @@ export default function DeviceSoftwareInventory({ deviceId, timezone, osType }: 
                 className="rounded-md bg-destructive px-3 py-1.5 text-sm font-medium text-destructive-foreground hover:opacity-90"
               >
                 {t('deviceSoftwareInventory.actions.uninstall')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* fork: "Close & update" confirmation */}
+      {closeConfirm && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="software-close-update-title"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setCloseConfirm(null);
+          }}
+        >
+          <div className="w-full max-w-md rounded-lg border bg-card p-6 shadow-lg">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="h-5 w-5 shrink-0 text-amber-500" />
+              <div className="flex-1">
+                <h4 id="software-close-update-title" className="text-base font-semibold">
+                  {t('deviceSoftwareInventory.closeUpdate.confirmTitle', { name: closeConfirm.name })}
+                </h4>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {t('deviceSoftwareInventory.closeUpdate.confirmMessage', { name: closeConfirm.name })}
+                </p>
+                <p className="mt-2 text-sm text-muted-foreground">
+                  {t('deviceSoftwareInventory.closeUpdate.confirmHint')}
+                </p>
+              </div>
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setCloseConfirm(null)}
+                className="rounded-md border px-3 py-1.5 text-sm hover:bg-muted"
+              >
+                {t('common:actions.cancel')}
+              </button>
+              <button
+                type="button"
+                data-testid="confirm-close-update"
+                onClick={() => {
+                  const { rowId, name, packageId } = closeConfirm;
+                  setCloseConfirm(null);
+                  void queueWindowsUpdates([{ id: rowId, name, updatePackageId: packageId }], 'force');
+                }}
+                className="rounded-md bg-amber-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-amber-700"
+              >
+                {t('deviceSoftwareInventory.closeUpdate.action')}
               </button>
             </div>
           </div>

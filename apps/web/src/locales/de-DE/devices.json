@@ -2494,6 +2494,28 @@
     "purchaseDateVendorHint": "Aus dem Versanddatum des Herstellers übernommen. Geben Sie ein Datum ein, um es zu überschreiben."
   },
   "deviceSoftwareInventory": {
+    "guarded": {
+      "updating": "{{names}} wird aktualisiert.",
+      "waiting": "Warten, bis der Benutzer {{programs}} schließt, damit {{names}} aktualisiert werden kann.",
+      "closing": "{{programs}} wird geschlossen, dann wird {{names}} aktualisiert.",
+      "queuedOffline": "Das Gerät ist offline: Updates für {{names}} wurden eingereiht, ohne offene Programme zu prüfen.",
+      "queuedPlain": "Updates für {{names}} wurden eingereiht; offene Programme wurden nicht geprüft.",
+      "userNotified": "Die Person am Gerät wurde benachrichtigt.",
+      "lastRun": "Letzter Update-Lauf ({{when}})",
+      "refresh": "Aktualisieren",
+      "outcomeUpdated": "Aktualisiert",
+      "outcomeUpToDate": "Bereits aktuell",
+      "outcomeBlocked": "Nicht aktualisiert, noch geöffnet: {{programs}}",
+      "outcomeFailed": "Fehlgeschlagen (Exitcode {{code}})",
+      "outcomeFailedOpen": "Fehlgeschlagen, Dateien in Verwendung durch: {{programs}}"
+    },
+    "closeUpdate": {
+      "action": "Schließen & aktualisieren",
+      "title": "App und alles, was ihre Dateien nutzt, zwangsweise schließen und dann aktualisieren",
+      "confirmTitle": "{{name}} schließen und aktualisieren?",
+      "confirmMessage": "Breeze schließt {{name}} und alle anderen Programme, die seine Dateien auf diesem Gerät nutzen, zwangsweise und installiert dann das Update. Das können auch Apps wie Teams, Zoom oder ein Browser sein. Nicht gespeicherte Arbeit in diesen Programmen geht verloren.",
+      "confirmHint": "Nur verwenden, wenn niemand am Gerät arbeitet oder die Arbeit gespeichert wurde."
+    },
     "actions": {
       "uninstall": "Deinstallieren",
       "update": "Aktualisieren"
