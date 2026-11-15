@@ -82,6 +82,16 @@ describe('driver scripts (fork)', () => {
     expect(r.oem?.updates).toEqual([expect.objectContaining({ name: 'Intel Chipset', id: 'ABC12' })]);
   });
 
+  it('keeps the maker apps the scan found, even as a lone string', () => {
+    expect(parseDriverScanOutput(wrap({ ...scanDoc, makerApps: ['MyASUS', 'Armoury Crate'] }))!.makerApps).toEqual(['MyASUS', 'Armoury Crate']);
+    expect(parseDriverScanOutput(wrap({ ...scanDoc, makerApps: 'MyASUS' }))!.makerApps).toEqual(['MyASUS']);
+    expect(parseDriverScanOutput(wrap(scanDoc))!.makerApps).toEqual([]);
+  });
+
+  it('the scan looks for MyASUS by its package folder', () => {
+    expect(DRIVER_SCRIPTS[0]!.content).toContain('B9ECED6F.ASUSPCAssistant_*');
+  });
+
   it('returns null without markers or with broken JSON, and ignores an unknown vendor', () => {
     expect(parseDriverScanOutput('no markers')).toBeNull();
     expect(parseDriverScanOutput(`${DRIVER_SCAN_BEGIN}{oops${DRIVER_SCAN_END}`)).toBeNull();
